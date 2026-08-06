@@ -1,0 +1,6 @@
+credentials:
+  usernames:
+    admin:
+      name: Administrator
+      email: admin@example.com
+      password: $2b$12$jYtbbHF6ssWmbpsjyuAqx.jXyyhY/wf8aVwL657NfT/6szf./vpAm

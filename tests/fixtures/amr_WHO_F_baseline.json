@@ -1,0 +1,200 @@
+{
+  "chromosomal": {
+    "16SrRNA": [],
+    "23SrRNA": [],
+    "folP": [],
+    "gyrA": [],
+    "gyrB": [
+      "A697V",
+      "A750T"
+    ],
+    "macA": [
+      "A8S",
+      "S23H",
+      "A32S",
+      "D42G",
+      "I98L",
+      "D99N",
+      "A130T",
+      "I373M"
+    ],
+    "macB": [
+      "R239Q"
+    ],
+    "mtrC": [],
+    "mtrR": [],
+    "norM": [
+      "K457E"
+    ],
+    "parC": [
+      "I384V"
+    ],
+    "parE": [],
+    "penA": [],
+    "pilQ": [
+      "S72P",
+      "F501L"
+    ],
+    "ponA": [],
+    "porB": [],
+    "rplD": [],
+    "rplV": [],
+    "rpoB": [],
+    "rpoD": [],
+    "rpsE": [],
+    "rpsJ": [],
+    "mtrR_promoter": [],
+    "macAB_promoter": [],
+    "norM_promoter": []
+  },
+  "synonymous_variants": {
+    "16SrRNA": [],
+    "23SrRNA": [],
+    "folP": [],
+    "gyrA": [],
+    "gyrB": [
+      {
+        "nuc": "C117G",
+        "aa": "G",
+        "pos": 39
+      }
+    ],
+    "mtrR": [],
+    "norM": [
+      {
+        "nuc": "C1086T",
+        "aa": "I",
+        "pos": 362
+      },
+      {
+        "nuc": "C1167T",
+        "aa": "G",
+        "pos": 389
+      }
+    ],
+    "parC": [
+      {
+        "nuc": "C105T",
+        "aa": "G",
+        "pos": 35
+      },
+      {
+        "nuc": "C393G",
+        "aa": "L",
+        "pos": 131
+      },
+      {
+        "nuc": "T819C",
+        "aa": "N",
+        "pos": 273
+      },
+      {
+        "nuc": "C1728G",
+        "aa": "R",
+        "pos": 576
+      }
+    ],
+    "parE": [],
+    "penA": [],
+    "pilQ": [
+      {
+        "nuc": "C211T",
+        "aa": "L",
+        "pos": 71
+      }
+    ],
+    "ponA": [
+      {
+        "nuc": "T1077C",
+        "aa": "T",
+        "pos": 359
+      }
+    ],
+    "porB": [],
+    "rplD": [],
+    "rpoB": [],
+    "rpoD": [],
+    "rpsE": [],
+    "rpsJ": []
+  },
+  "plasmid": {
+    "aac-aph": "error",
+    "blaTEM-1": "error",
+    "blatem-135": "error",
+    "ereA": "error",
+    "ereB": "error",
+    "ermA": "error",
+    "ermB": "error",
+    "ermC": "error",
+    "ermF": "error",
+    "mef": "error",
+    "tet-M": "error",
+    "tet-O": "error"
+  },
+  "cdc_phenotypes": [
+    "wildtype"
+  ],
+  "resistance_category": "susceptible",
+  "n_resistance_classes": 0,
+  "failure_probability": 0.0,
+  "therapy": {
+    "avoid": [],
+    "recommend": [
+      "ceftriaxone 1g IM + azithromycin 2g orally (single dose)"
+    ],
+    "alternatives": [
+      {
+        "condition": "beta-lactam allergy",
+        "regimen": "spectinomycin 2g IM + azithromycin 2g orally (single dose)"
+      },
+      {
+        "condition": "beta-lactam allergy (alternative)",
+        "regimen": "gentamicin 240mg IM + azithromycin 2g orally (single dose)"
+      },
+      {
+        "condition": "IM route contraindicated",
+        "regimen": "cefixime 400mg + azithromycin 2g orally (single dose)"
+      },
+      {
+        "condition": "fluoroquinolone susceptibility confirmed",
+        "regimen": "ciprofloxacin 500mg orally (single dose) \u2014 avoid in pregnancy and age >60y"
+      }
+    ]
+  },
+  "who_matches": [],
+  "mlst": {
+    "st": "?",
+    "novel": false,
+    "alleles": {
+      "abcZ": "error",
+      "adk": "error",
+      "aroE": "error",
+      "fumC": "error",
+      "gdh": "error",
+      "pdhC": "error",
+      "pgm": "error"
+    },
+    "scheme": "neisseria",
+    "method": "local",
+    "incomplete": true
+  },
+  "mosaic_pena": {
+    "identity": null,
+    "mosaic_suspected": false,
+    "allele_class": "blastn not found"
+  },
+  "ngstar": {
+    "ST": "?",
+    "alleles": {
+      "penA": "error",
+      "mtrR": "error",
+      "porB": "error",
+      "ponA": "error",
+      "gyrA": "error",
+      "parC": "error",
+      "23SrRNA": "error"
+    },
+    "novel": false,
+    "incomplete": true
+  }
+}

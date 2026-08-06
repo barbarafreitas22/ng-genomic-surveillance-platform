@@ -1,0 +1,102 @@
+{
+  "/workspace/backend/phylogeny/runs/stage_76e68622c6bc49f7b95ad8fdb6e1d8da/WHO_F_TRNG.fna": {
+    "md5": "d0e25b47a9ba2e52bc9d092e187c530b",
+    "node_name": "WHO_F_TRNG",
+    "sketch_path": "/workspace/data/phylogeny/sample_sketch_cache/817b4bf19228250652660a8878132f3b.skf"
+  },
+  "/workspace/backend/phylogeny/runs/stage_aaef53e285ca47dbad2c846534b3c64f/NG01.contigs.fa": {
+    "md5": "0e392d95f1ffbec5b3d91cf2dd240b1b",
+    "node_name": "NG01.contigs",
+    "sketch_path": "/workspace/data/phylogeny/sample_sketch_cache/42d8dc7c684c8f4edbba817fd898a8b3.skf"
+  },
+  "/workspace/backend/phylogeny/runs/stage_aaef53e285ca47dbad2c846534b3c64f/NG02.contigs.fa": {
+    "md5": "18dd9a03a52b223f88085530294f3a3d",
+    "node_name": "NG02.contigs",
+    "sketch_path": "/workspace/data/phylogeny/sample_sketch_cache/0b0ace601eaea237c2c7237474993a09.skf"
+  },
+  "/workspace/backend/phylogeny/runs/stage_aaef53e285ca47dbad2c846534b3c64f/NG03.contigs.fa": {
+    "md5": "a802ed4ac4a19764e21ca9e03efe6d3f",
+    "node_name": "NG03.contigs",
+    "sketch_path": "/workspace/data/phylogeny/sample_sketch_cache/00cc068ed6440944d742b78aebed1c3d.skf"
+  },
+  "/workspace/backend/phylogeny/runs/stage_aaef53e285ca47dbad2c846534b3c64f/NG04.contigs.fa": {
+    "md5": "7ce868051167a9b18f54fbec032c5b61",
+    "node_name": "NG04.contigs",
+    "sketch_path": "/workspace/data/phylogeny/sample_sketch_cache/f8d6f66239f27db6f60cb4e9ed71f6a9.skf"
+  },
+  "/workspace/backend/phylogeny/runs/stage_aaef53e285ca47dbad2c846534b3c64f/NG05.contigs.fa": {
+    "md5": "04ee0a2b93b3bfc42169a5b1cc84cd28",
+    "node_name": "NG05.contigs",
+    "sketch_path": "/workspace/data/phylogeny/sample_sketch_cache/4b16297b7cc977a8509dc6ffd24adfa7.skf"
+  },
+  "/workspace/backend/phylogeny/runs/stage_aaef53e285ca47dbad2c846534b3c64f/NG06.contigs.fa": {
+    "md5": "1d20bd640030e336f5ebccc4957b29fe",
+    "node_name": "NG06.contigs",
+    "sketch_path": "/workspace/data/phylogeny/sample_sketch_cache/3533b135fb693c3a5458b22275df9a1d.skf"
+  },
+  "/workspace/backend/phylogeny/runs/stage_aaef53e285ca47dbad2c846534b3c64f/NG07.contigs.fa": {
+    "md5": "5c55a56d9bce90a65606da5656e239d6",
+    "node_name": "NG07.contigs",
+    "sketch_path": "/workspace/data/phylogeny/sample_sketch_cache/39e5cb544d4e9511f2831d9024a7d917.skf"
+  },
+  "/workspace/backend/phylogeny/runs/stage_aaef53e285ca47dbad2c846534b3c64f/NG08.contigs.fa": {
+    "md5": "5740355eb74b47c398989a90ca5976fc",
+    "node_name": "NG08.contigs",
+    "sketch_path": "/workspace/data/phylogeny/sample_sketch_cache/5add369f575070324ff1c8e152b56ec2.skf"
+  },
+  "/workspace/backend/phylogeny/runs/stage_aaef53e285ca47dbad2c846534b3c64f/NG09.contigs.fa": {
+    "md5": "7e239456c68f10ca0f31afddada0694c",
+    "node_name": "NG09.contigs",
+    "sketch_path": "/workspace/data/phylogeny/sample_sketch_cache/502c6c4d8f2fd352c7c909c03b4a72d7.skf"
+  },
+  "/workspace/backend/phylogeny/runs/stage_aaef53e285ca47dbad2c846534b3c64f/NG10.contigs.fa": {
+    "md5": "1639660a64b42227f6b7fc87186dfdb1",
+    "node_name": "NG10.contigs",
+    "sketch_path": "/workspace/data/phylogeny/sample_sketch_cache/64f3da17473bfa16036ce092195cf92c.skf"
+  },
+  "/workspace/backend/phylogeny/runs/stage_aaef53e285ca47dbad2c846534b3c64f/NG11.contigs.fa": {
+    "md5": "417932e490c0259559b7138adfbe8403",
+    "node_name": "NG11.contigs",
+    "sketch_path": "/workspace/data/phylogeny/sample_sketch_cache/32fc10bb2a47a0eb712a6b33c3904083.skf"
+  },
+  "/workspace/backend/phylogeny/runs/stage_aaef53e285ca47dbad2c846534b3c64f/NG12.contigs.fa": {
+    "md5": "ca7b43a4a9efa7629bda8fc4dc027e55",
+    "node_name": "NG12.contigs",
+    "sketch_path": "/workspace/data/phylogeny/sample_sketch_cache/e5a73f99ffef3c2441de8ba7bf4dfa9f.skf"
+  },
+  "/workspace/backend/phylogeny/runs/stage_aaef53e285ca47dbad2c846534b3c64f/NG13.contigs.fa": {
+    "md5": "6df64b96f392cc0bca357244cf28deb9",
+    "node_name": "NG13.contigs",
+    "sketch_path": "/workspace/data/phylogeny/sample_sketch_cache/ebe4c791a396a13987abcd221d7a54b3.skf"
+  },
+  "/workspace/backend/phylogeny/runs/stage_aaef53e285ca47dbad2c846534b3c64f/NG14.contigs.fa": {
+    "md5": "984e53026fd649c2fb386dac45645714",
+    "node_name": "NG14.contigs",
+    "sketch_path": "/workspace/data/phylogeny/sample_sketch_cache/7a372b272947c323a0ae149e3c8f7936.skf"
+  },
+  "/workspace/backend/phylogeny/runs/stage_aaef53e285ca47dbad2c846534b3c64f/NG15.contigs.fa": {
+    "md5": "98d200ed0a254a1399c85921626aea91",
+    "node_name": "NG15.contigs",
+    "sketch_path": "/workspace/data/phylogeny/sample_sketch_cache/9b9d5eed8ac8086ea7f7b55c14d5d990.skf"
+  },
+  "/workspace/backend/phylogeny/runs/stage_aaef53e285ca47dbad2c846534b3c64f/NG16.contigs.fa": {
+    "md5": "59d1547448b028fa301d69047312a726",
+    "node_name": "NG16.contigs",
+    "sketch_path": "/workspace/data/phylogeny/sample_sketch_cache/320a152d08139e4a2dd366bf3bac296b.skf"
+  },
+  "/workspace/backend/phylogeny/runs/stage_aaef53e285ca47dbad2c846534b3c64f/NG17.contigs.fa": {
+    "md5": "881eab61973d1e288adea149b3eb2391",
+    "node_name": "NG17.contigs",
+    "sketch_path": "/workspace/data/phylogeny/sample_sketch_cache/41c9e5d2b01012d3b173cf2e1e830c2b.skf"
+  },
+  "/workspace/backend/phylogeny/runs/stage_aaef53e285ca47dbad2c846534b3c64f/NG18.contigs.fa": {
+    "md5": "ddbaa96d8b96ade01835d7f82a28f090",
+    "node_name": "NG18.contigs",
+    "sketch_path": "/workspace/data/phylogeny/sample_sketch_cache/803bcd727881fe44a6e88f5b32cffded.skf"
+  },
+  "/workspace/backend/phylogeny/runs/stage_aaef53e285ca47dbad2c846534b3c64f/NG19.contigs.fa": {
+    "md5": "c22672d11137a21dcffa91c7e9975574",
+    "node_name": "NG19.contigs",
+    "sketch_path": "/workspace/data/phylogeny/sample_sketch_cache/97b0dc664555af284bab445c8b9c9076.skf"
+  }
+}

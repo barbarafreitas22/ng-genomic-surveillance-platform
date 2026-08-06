@@ -1,0 +1,9 @@
+[server]
+maxUploadSize = 3000
+enableXsrfProtection = false
+enableCORS = false
+enableWebsocketCompression = false
+fileWatcherType = "poll"
+
+[runner]
+fastReruns = true
