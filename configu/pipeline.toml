@@ -1,0 +1,42 @@
+[paths]
+output_root = "results"
+
+[server]
+maxUploadSize = 1000
+
+[reference]
+genome_fasta = "data/reference/FA1090.fasta"
+genome_index = "data/reference/FA1090.mmi"
+
+[amr]
+genes_fasta = "data/amr/amr_genes.fasta"
+blast_db_prefix = "data/amr/amr_genes_db"
+mutation_table = "data/amr/mutation_to_phenotype.tsv"
+
+[minimap2]
+threads = 8
+preset = "sr"
+extra_args = "-a"
+
+[blast]
+task = "blastn"
+evalue = 1e-20
+identity_threshold = 0.9
+coverage_threshold = 0.9
+max_hits = 10
+
+[phylogeny]
+description = "Sketch-based SNP distance estimation and NJ tree construction"
+ska_binary = "ska"
+rapidnj_binary = "rapidnj"
+output_dir = "phylogeny"
+ska_kmer = 31
+ska_min_coverage = 3
+tree_format = "newick"
+bootstrap = false
+color_base = "#1d4ed8"
+color_upload = "#dc2626"
+color_internal = "#9ca3af"
+layout = "dendrogram-horizontal"
+
+

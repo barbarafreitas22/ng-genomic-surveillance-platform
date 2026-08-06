@@ -1,0 +1,438 @@
+{
+  "_comment": "Metadata for backbone/reference genomes. WHO strains from Unemo et al. 2012/2016 (J Antimicrob Chemother). ERR156xxxx from Harris et al. 2018 Lancet Infect Dis (PRJEB9227, Euro-GASP). ERR3851xxx from Pinto et al. 2020-2021 (PRJEB36482, PTGonoNet/INSA).",
+  "WHOF_genomic": {
+    "label": "WHO F",
+    "type": "who_reference",
+    "country": "Australia",
+    "year": 2008,
+    "mlst_st": "ST1586",
+    "ngstar_st": "ST750",
+    "resistance_profile": "Susceptible (control strain)",
+    "resistance_classes": [],
+    "notes": "WHO 2012 panel. Fully susceptible control. Used as susceptibility benchmark.",
+    "mdr_xdr_class": "susceptible"
+  },
+  "WHOG_genomic": {
+    "label": "WHO G",
+    "type": "who_reference",
+    "country": "Australia",
+    "year": 2009,
+    "mlst_st": "ST1901",
+    "ngstar_st": "ST1",
+    "resistance_profile": "rCIP, rTET, decreased ceftriaxone susceptibility",
+    "resistance_classes": [
+      "fluoroquinolone",
+      "tetracycline",
+      "ceftriaxone"
+    ],
+    "notes": "WHO 2012 panel. ST1901 globally dominant lineage.",
+    "mdr_xdr_class": "MDR"
+  },
+  "WHOK_genomic": {
+    "label": "WHO K",
+    "type": "who_reference",
+    "country": "Australia",
+    "year": 2008,
+    "mlst_st": "ST9363",
+    "ngstar_st": null,
+    "resistance_profile": "HLrAZM (23S A2059G), rCIP, rTET",
+    "resistance_classes": [
+      "azithromycin",
+      "fluoroquinolone",
+      "tetracycline"
+    ],
+    "notes": "WHO 2012 panel. High-level azithromycin resistance via 23S rRNA A2059G.",
+    "mdr_xdr_class": "MDR"
+  },
+  "WHOL_genomic": {
+    "label": "WHO L",
+    "type": "who_reference",
+    "country": "United Kingdom",
+    "year": 2009,
+    "mlst_st": "ST1407",
+    "ngstar_st": null,
+    "resistance_profile": "rCIP, rTET, rPEN, decreased ceftriaxone susceptibility",
+    "resistance_classes": [
+      "fluoroquinolone",
+      "tetracycline",
+      "penicillin",
+      "ceftriaxone"
+    ],
+    "notes": "WHO 2012 panel. ST1407 European MDR lineage.",
+    "mdr_xdr_class": "MDR"
+  },
+  "WHOM_genomic": {
+    "label": "WHO M",
+    "type": "who_reference",
+    "country": "Canada",
+    "year": 2010,
+    "mlst_st": "ST1407",
+    "ngstar_st": null,
+    "resistance_profile": "rCIP, rTET, decreased ceftriaxone susceptibility",
+    "resistance_classes": [
+      "fluoroquinolone",
+      "tetracycline",
+      "ceftriaxone"
+    ],
+    "notes": "WHO 2012 panel. ST1407 clone; mosaic penA allele.",
+    "mdr_xdr_class": "MDR"
+  },
+  "WHON_genomic": {
+    "label": "WHO N",
+    "type": "who_reference",
+    "country": "Japan",
+    "year": 2009,
+    "mlst_st": "ST7827",
+    "ngstar_st": null,
+    "resistance_profile": "rCIP, decreased ceftriaxone susceptibility",
+    "resistance_classes": [
+      "fluoroquinolone",
+      "ceftriaxone"
+    ],
+    "notes": "WHO 2012 panel. Japan \u2014 cephalosporin-resistant lineage.",
+    "mdr_xdr_class": "MDR"
+  },
+  "WHOO_genomic": {
+    "label": "WHO O",
+    "type": "who_reference",
+    "country": "Norway",
+    "year": 2011,
+    "mlst_st": null,
+    "ngstar_st": null,
+    "resistance_profile": "rCIP, decreased penicillin susceptibility",
+    "resistance_classes": [
+      "fluoroquinolone",
+      "penicillin"
+    ],
+    "notes": "WHO 2012 panel.",
+    "mdr_xdr_class": "MDR"
+  },
+  "WHOP_genomic": {
+    "label": "WHO P",
+    "type": "who_reference",
+    "country": "Philippines",
+    "year": 2011,
+    "mlst_st": "ST7363",
+    "ngstar_st": null,
+    "resistance_profile": "XDR: rCEF, HLrAZM, rCIP, rTET, rPEN",
+    "resistance_classes": [
+      "ceftriaxone",
+      "azithromycin",
+      "fluoroquinolone",
+      "tetracycline",
+      "penicillin"
+    ],
+    "notes": "WHO 2012 panel. XDR strain \u2014 ceftriaxone treatment failure reported (H041-like).",
+    "mdr_xdr_class": "XDR"
+  },
+  "WHOU_genomic": {
+    "label": "WHO U",
+    "type": "who_reference",
+    "country": "USA",
+    "year": 2014,
+    "mlst_st": "ST10699",
+    "ngstar_st": null,
+    "resistance_profile": "rCIP, rTET, decreased ceftriaxone susceptibility",
+    "resistance_classes": [
+      "fluoroquinolone",
+      "tetracycline",
+      "ceftriaxone"
+    ],
+    "notes": "WHO 2016 second panel.",
+    "mdr_xdr_class": "MDR"
+  },
+  "WHOV_genomic": {
+    "label": "WHO V",
+    "type": "who_reference",
+    "country": "Australia",
+    "year": 2011,
+    "mlst_st": "ST1407",
+    "ngstar_st": null,
+    "resistance_profile": "rCIP, rTET",
+    "resistance_classes": [
+      "fluoroquinolone",
+      "tetracycline"
+    ],
+    "notes": "WHO 2016 second panel. ST1407 lineage.",
+    "mdr_xdr_class": "MDR"
+  },
+  "WHOW_genomic": {
+    "label": "WHO W",
+    "type": "who_reference",
+    "country": "Denmark",
+    "year": 2014,
+    "mlst_st": "ST1407",
+    "ngstar_st": null,
+    "resistance_profile": "rCIP, rTET",
+    "resistance_classes": [
+      "fluoroquinolone",
+      "tetracycline"
+    ],
+    "notes": "WHO 2016 second panel.",
+    "mdr_xdr_class": "MDR"
+  },
+  "WHOX_genomic": {
+    "label": "WHO X",
+    "type": "who_reference",
+    "country": "Papua New Guinea",
+    "year": 2013,
+    "mlst_st": null,
+    "ngstar_st": null,
+    "resistance_profile": "Decreased ceftriaxone susceptibility",
+    "resistance_classes": [
+      "ceftriaxone"
+    ],
+    "notes": "WHO 2016 second panel.",
+    "mdr_xdr_class": "MDR"
+  },
+  "WHOY_genomic": {
+    "label": "WHO Y",
+    "type": "who_reference",
+    "country": "Denmark",
+    "year": 2014,
+    "mlst_st": "ST1407",
+    "ngstar_st": null,
+    "resistance_profile": "HLrAZM, rCIP, rTET",
+    "resistance_classes": [
+      "azithromycin",
+      "fluoroquinolone",
+      "tetracycline"
+    ],
+    "notes": "WHO 2016 second panel. High-level azithromycin resistance.",
+    "mdr_xdr_class": "MDR"
+  },
+  "WHOZ_genomic": {
+    "label": "WHO Z",
+    "type": "who_reference",
+    "country": "United Kingdom",
+    "year": 2014,
+    "mlst_st": "ST1901",
+    "ngstar_st": null,
+    "resistance_profile": "Decreased ceftriaxone susceptibility, rCIP",
+    "resistance_classes": [
+      "ceftriaxone",
+      "fluoroquinolone"
+    ],
+    "notes": "WHO 2016 second panel.",
+    "mdr_xdr_class": "MDR"
+  },
+  "ERR1560803_dPEN_dTET": {
+    "label": "ERR1560803 (PT13_031)",
+    "type": "ena_reference",
+    "country": "Portugal",
+    "year": 2013,
+    "mlst_st": null,
+    "ngstar_st": null,
+    "resistance_profile": "Decreased penicillin susceptibility, decreased tetracycline susceptibility",
+    "resistance_classes": [
+      "penicillin",
+      "tetracycline"
+    ],
+    "notes": "Euro-GASP study (PRJEB9227). Strain PT13_031 \u2014 Portugal 2013. Harris et al. 2018, Lancet Infect Dis (PMID 29776807)."
+  },
+  "ERR1560856_rTET": {
+    "label": "ERR1560856 (PT13_088)",
+    "type": "ena_reference",
+    "country": "Portugal",
+    "year": 2013,
+    "mlst_st": null,
+    "ngstar_st": null,
+    "resistance_profile": "Resistant to tetracycline",
+    "resistance_classes": [
+      "tetracycline"
+    ],
+    "notes": "Euro-GASP study (PRJEB9227). Strain PT13_088 \u2014 Portugal 2013. Harris et al. 2018, Lancet Infect Dis (PMID 29776807)."
+  },
+  "ERR3851425_rRI": {
+    "label": "ERR3851425 (NGPT15182)",
+    "type": "ena_reference",
+    "country": "Portugal",
+    "year": 2015,
+    "mlst_st": "ST9363",
+    "ngstar_st": null,
+    "resistance_profile": "Reduced rifampicin inhibition",
+    "resistance_classes": [
+      "rifampicin"
+    ],
+    "notes": "PTGonoNet/INSA (PRJEB36482). Strain NGPT15182, 2015, urethra, North region. NGMAST 7445. Pinto et al. 2021, Microbial Genomics."
+  },
+  "ERR3851452_multiR": {
+    "label": "ERR3851452 (NGPT15124)",
+    "type": "ena_reference",
+    "country": "Portugal",
+    "year": 2015,
+    "mlst_st": "ST1901",
+    "ngstar_st": null,
+    "resistance_profile": "Multi-resistant",
+    "resistance_classes": [
+      "multiple"
+    ],
+    "notes": "PTGonoNet/INSA (PRJEB36482). Strain NGPT15124, 2015, urethra, Lisbon Metropolitan Area. NGMAST 1407. Pinto et al. 2021, Microbial Genomics."
+  },
+  "ERR3851478_rSUL": {
+    "label": "ERR3851478 (NGPT03004)",
+    "type": "ena_reference",
+    "country": "Portugal",
+    "year": 2003,
+    "mlst_st": "ST1596",
+    "ngstar_st": null,
+    "resistance_profile": "Resistant to sulfonamides",
+    "resistance_classes": [
+      "sulfonamide"
+    ],
+    "notes": "PTGonoNet/INSA (PRJEB36482). Strain NGPT03004, 2003, urethra, Lisbon Metropolitan Area. NGMAST 18168. Pinto et al. 2021, Microbial Genomics."
+  },
+  "ERR3851482_dAZM_dCEF": {
+    "label": "ERR3851482 (NGPT12001)",
+    "type": "ena_reference",
+    "country": "Portugal",
+    "year": 2012,
+    "mlst_st": "ST11988",
+    "ngstar_st": null,
+    "resistance_profile": "Decreased azithromycin susceptibility, decreased ceftriaxone susceptibility",
+    "resistance_classes": [
+      "azithromycin",
+      "ceftriaxone"
+    ],
+    "notes": "PTGonoNet/INSA (PRJEB36482). Strain NGPT12001, 2012, cervix, Lisbon Metropolitan Area. NGMAST 2. Dual decreased susceptibility \u2014 clinically significant. Pinto et al. 2021, Microbial Genomics."
+  },
+  "ERR3851551_FullySusceptible": {
+    "label": "ERR3851551 (NGPT17406)",
+    "type": "ena_reference",
+    "country": "Portugal",
+    "year": 2017,
+    "mlst_st": "ST1594",
+    "ngstar_st": null,
+    "resistance_profile": "Fully susceptible",
+    "resistance_classes": [],
+    "notes": "PTGonoNet/INSA (PRJEB36482). Strain NGPT17406, 2017, urethra, Algarve. NGMAST 18197. Fully susceptible control. Pinto et al. 2021, Microbial Genomics."
+  },
+  "ERR3851566_rAZM": {
+    "label": "ERR3851566 (NGPT09083)",
+    "type": "ena_reference",
+    "country": "Portugal",
+    "year": 2009,
+    "mlst_st": "ST1901",
+    "ngstar_st": null,
+    "resistance_profile": "Resistant to azithromycin",
+    "resistance_classes": [
+      "azithromycin"
+    ],
+    "notes": "PTGonoNet/INSA (PRJEB36482). Strain NGPT09083, 2009, urethra, Lisbon Metropolitan Area. NGMAST 5649. Pinto et al. 2021, Microbial Genomics."
+  },
+  "ERR3851598_dTET": {
+    "label": "ERR3851598 (NGPT17496)",
+    "type": "ena_reference",
+    "country": "Portugal",
+    "year": 2017,
+    "mlst_st": "ST11996",
+    "ngstar_st": null,
+    "resistance_profile": "Decreased tetracycline susceptibility",
+    "resistance_classes": [
+      "tetracycline"
+    ],
+    "notes": "PTGonoNet/INSA (PRJEB36482). Strain NGPT17496, 2017, urethra, North region. NGMAST 4261. Pinto et al. 2021, Microbial Genomics."
+  },
+  "ERR3851600_rCIP": {
+    "label": "ERR3851600 (NGPT03017)",
+    "type": "ena_reference",
+    "country": "Portugal",
+    "year": 2003,
+    "mlst_st": "ST1587",
+    "ngstar_st": null,
+    "resistance_profile": "Resistant to ciprofloxacin",
+    "resistance_classes": [
+      "fluoroquinolone"
+    ],
+    "notes": "PTGonoNet/INSA (PRJEB36482). Strain NGPT03017, 2003, urethra, Center region. NGMAST 282. Pinto et al. 2021, Microbial Genomics."
+  },
+  "ERR3851656_dCEF": {
+    "label": "ERR3851656 (NGPT17422)",
+    "type": "ena_reference",
+    "country": "Portugal",
+    "year": 2017,
+    "mlst_st": "ST1583",
+    "ngstar_st": null,
+    "resistance_profile": "Decreased ceftriaxone susceptibility",
+    "resistance_classes": [
+      "ceftriaxone"
+    ],
+    "notes": "PTGonoNet/INSA (PRJEB36482). Strain NGPT17422, 2017, cervix, Lisbon Metropolitan Area. NGMAST 18195. Pinto et al. 2021, Microbial Genomics."
+  },
+  "ERR3851679_rCEF": {
+    "label": "ERR3851679 (NGPT09084)",
+    "type": "ena_reference",
+    "country": "Portugal",
+    "year": 2009,
+    "mlst_st": "ST1901",
+    "ngstar_st": null,
+    "resistance_profile": "Resistant to ceftriaxone",
+    "resistance_classes": [
+      "ceftriaxone"
+    ],
+    "notes": "PTGonoNet/INSA (PRJEB36482). Strain NGPT09084, 2009, urethra, Lisbon Metropolitan Area. NGMAST 5335. Ceftriaxone resistance \u2014 clinically critical. Pinto et al. 2021, Microbial Genomics."
+  },
+  "ERR3851796_rPEN": {
+    "label": "ERR3851796 (NGPT10049)",
+    "type": "ena_reference",
+    "country": "Portugal",
+    "year": 2010,
+    "mlst_st": "ST1588",
+    "ngstar_st": null,
+    "resistance_profile": "Resistant to penicillin",
+    "resistance_classes": [
+      "penicillin"
+    ],
+    "notes": "PTGonoNet/INSA (PRJEB36482). Strain NGPT10049, 2010, urethra, Lisbon Metropolitan Area. NGMAST 1217. Pinto et al. 2021, Microbial Genomics."
+  },
+  "ERR3851823_CEF_AZM": {
+    "label": "ERR3851823 (NGPT17420)",
+    "type": "ena_reference",
+    "country": "Portugal",
+    "year": 2017,
+    "mlst_st": "ST1583",
+    "ngstar_st": null,
+    "resistance_profile": "Resistant to ceftriaxone and azithromycin",
+    "resistance_classes": [
+      "ceftriaxone",
+      "azithromycin"
+    ],
+    "notes": "PTGonoNet/INSA (PRJEB36482). Strain NGPT17420, 2017, urethra, Lisbon Metropolitan Area. NGMAST 15589. Dual resistance \u2014 XDR profile. Pinto et al. 2021, Microbial Genomics."
+  },
+  "ERR3851892_rSUL_dTET": {
+    "label": "ERR3851892 (NGPT17020)",
+    "type": "ena_reference",
+    "country": "Portugal",
+    "year": 2017,
+    "mlst_st": "ST1584",
+    "ngstar_st": null,
+    "resistance_profile": "Resistant to sulfonamides, decreased tetracycline susceptibility",
+    "resistance_classes": [
+      "sulfonamide",
+      "tetracycline"
+    ],
+    "notes": "PTGonoNet/INSA (PRJEB36482). Strain NGPT17020, 2017, cervix, Alentejo. NGMAST 11744. Pinto et al. 2021, Microbial Genomics."
+  },
+  "lactamica_genomic": {
+    "label": "N. lactamica",
+    "type": "outgroup",
+    "country": null,
+    "year": null,
+    "mlst_st": null,
+    "ngstar_st": null,
+    "resistance_profile": "Commensal \u2014 not applicable",
+    "resistance_classes": [],
+    "notes": "Neisseria lactamica. Commensal species closely related to N. gonorrhoeae. Used as outgroup to root the tree."
+  },
+  "mendinitis_genomic": {
+    "label": "N. meningitidis",
+    "type": "outgroup",
+    "country": null,
+    "year": null,
+    "mlst_st": null,
+    "ngstar_st": null,
+    "resistance_profile": "Pathogenic Neisseria \u2014 not applicable",
+    "resistance_classes": [],
+    "notes": "Neisseria meningitidis. Used as outgroup to root the tree."
+  }
+}

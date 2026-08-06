@@ -1,0 +1,43 @@
+name: ng
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.10
+  - pandas
+  - numpy
+  - scipy
+  - scikit-learn
+  - biopython
+  - streamlit
+  - altair
+  - matplotlib-base
+  - seaborn-base
+  - plotly
+  - requests
+  - pyyaml
+  - python-dateutil
+  - rich
+  - psutil
+  - pip
+  - fastqc
+  - fastp
+  - multiqc
+  - minimap2
+  - samtools
+  - bcftools
+  - kraken2
+  - blast
+  - mlst
+  - mash
+  - rapidnj
+  - ska2
+  - spades
+  - quast
+  - pip:
+    - vega-datasets
+    - newick
+    - pyfastx
+    - scikit-image
+    - pyngoST
