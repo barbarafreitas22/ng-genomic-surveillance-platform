@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import streamlit as st
 
-from views.shared import *
-
 
 def render() -> None:
     st.markdown("""
@@ -30,18 +28,18 @@ def render() -> None:
                 border:1px solid #cbd5e1; border-radius:10px;
                 padding:1.4rem 1.8rem; line-height:2.4;">
       <b>Raw FASTQ reads</b><br>
-      &nbsp;&nbsp;&nbsp;&nbsp;↓&nbsp;&nbsp;FastQC &nbsp;·&nbsp; fastp &nbsp;·&nbsp; Kraken2 &nbsp;·&nbsp; Coverage vs WHO&nbsp;F<br>
-      <b>Module 1 — QC &amp; Assembly</b><br>
+      &nbsp;&nbsp;&nbsp;&nbsp;↓&nbsp;&nbsp;fastp &nbsp;·&nbsp; Kraken2 &nbsp;·&nbsp; Coverage vs WHO&nbsp;F<br>
+      <b>Module 1: QC &amp; Assembly</b><br>
       &nbsp;&nbsp;&nbsp;&nbsp;↓&nbsp;&nbsp;Trimmed reads<br>
-      <b>Module 1 (cont.) — De Novo Assembly</b>&nbsp;&nbsp;(SPAdes)<br>
+      <b>Module 1 (cont.): De Novo Assembly</b>&nbsp;&nbsp;(SPAdes)<br>
       &nbsp;&nbsp;&nbsp;&nbsp;↓&nbsp;&nbsp;Assembled contigs (FASTA)<br>
-      <b>Module 2 — AMR Profiling</b>&nbsp;&nbsp;(Minimap2 · BCFtools · MLST · European 2020 rules)<br>
+      <b>Module 2: AMR Profiling</b>&nbsp;&nbsp;(Minimap2 · BCFtools · MLST · European 2020 rules)<br>
       &nbsp;&nbsp;&nbsp;&nbsp;↓&nbsp;&nbsp;Contigs<br>
-      <b>Module 3 — Phylogenetic Analysis</b>&nbsp;&nbsp;(SKA2 · RapidNJ)<br>
+      <b>Module 3: Phylogenetic Analysis</b>&nbsp;&nbsp;(SKA2 · RapidNJ)<br>
       &nbsp;&nbsp;&nbsp;&nbsp;↓<br>
       <b>Interactive phylogenetic tree + AMR report</b>
     </div>
-    """, height=260)
+    """, height=440)
 
     st.markdown("""
     Each module can also be run independently via the sidebar. All tools run inside a
@@ -50,7 +48,6 @@ def render() -> None:
 
     | Component | Version / source |
     |---|---|
-    | FastQC | Bioconda |
     | fastp | Bioconda |
     | SPAdes | Bioconda |
     | Minimap2 | Bioconda |
@@ -58,7 +55,6 @@ def render() -> None:
     | SKA2 (`ska2`) | Bioconda |
     | rapidNJ | Bioconda |
     | Kraken2 | Bioconda |
-    | QUAST | Bioconda |
     | chewBBACA | Bioconda |
     | pyngoST | pip |
     | Python | 3.10 (conda-forge) |
@@ -66,22 +62,7 @@ def render() -> None:
     """)
 
     st.markdown("---")
-    st.markdown("## Module 1 — QC & Assembly")
-
-    st.markdown("### FastQC")
-    st.markdown("""
-    FastQC performs per-read quality assessment on raw FASTQ input before trimming.
-    The following metrics are evaluated per file:
-
-    - **Per-base sequence quality** — Phred scores along read length
-    - **Per-sequence quality scores** — distribution of mean quality per read
-    - **GC content** — expected ~52% for *N. gonorrhoeae*
-    - **Adapter content** — identifies Illumina adapter contamination
-    - **Sequence duplication levels** — flags PCR over-amplification
-
-    FastQC is run with default parameters on each input file. Output ZIP archives are
-    parsed programmatically to extract `Total Sequences` and `%GC` for display in the UI.
-    """)
+    st.markdown("## Module 1: QC & Assembly")
 
     st.markdown("### fastp")
     st.markdown("""
@@ -94,16 +75,19 @@ def render() -> None:
     | Flag | Value | Effect |
     |---|---|---|
     | `--thread` | 2 | CPU threads |
-    | `--cut_right` | — | Sliding-window quality trimming from the 3′ end |
+    | `--cut_right` | N/A | Sliding-window quality trimming from the 3′ end |
     | `--cut_window_size` | 4 | Window size for quality scan |
     | `--cut_mean_quality` | 20 | Clip window when mean Phred < 20 |
     | `--length_required` | 50 | Discard reads shorter than 50 bp after trimming |
-    | `--detect_adapter_for_pe` | — | Auto-detect adapters for paired-end (PE only) |
+    | `--detect_adapter_for_pe` | N/A | Auto-detect adapters for paired-end (PE only) |
 
     For paired-end runs, adapters are detected automatically without requiring an
     adapter file. For single-end runs, fastp uses its built-in adapter database.
     fastp also writes `fastp.json` and `fastp.html` quality reports alongside the
-    trimmed reads.
+    trimmed reads. A standalone FastQC pass on the raw reads was dropped, its only
+    two programmatically used fields, pre-trimming read count and GC%, are already
+    present in fastp's own `before_filtering` summary, so running FastQC separately
+    only duplicated numbers fastp already reports.
     """)
 
     st.markdown("### Species Confirmation with Kraken2")
@@ -120,20 +104,24 @@ def render() -> None:
         ```bash
         python scripts/build_kraken2_db.py
         ```
-        This downloads up to 15 complete *N. gonorrhoeae* genomes plus one reference genome
-        each for *N. meningitidis*, *N. lactamica*, *N. cinerea* and *N. subflava* (NCBI
-        `datasets` CLI), then runs `kraken2-build` to add them to the library and build the
-        database, followed by `kraken2-build --clean` to drop the intermediate library FASTA.
-        The close relatives let off-target reads resolve to the correct genus/species instead
-        of just "unclassified".
+        This downloads up to 100 complete *N. gonorrhoeae* genomes (plus the bundled WHO
+        reference strains), up to 100 genomes each for five close relatives (*N. meningitidis*,
+        *N. lactamica*, *N. cinerea*, *N. subflava*, *N. mucosa*), and up to 5 genomes each for
+        six non-*Neisseria* outgroups common in genital/respiratory specimens (*Kingella kingae*,
+        *Eikenella corrodens*, *Moraxella catarrhalis*, *Haemophilus influenzae*,
+        *Staphylococcus aureus*, *Escherichia coli*), via the NCBI `datasets` CLI. `kraken2-build`
+        then adds them to the library and builds the database, followed by `kraken2-build --clean`
+        to drop the intermediate library FASTA and taxonomy download files. The close relatives
+        and outgroups let off-target reads resolve to the correct genus/species instead of just
+        "unclassified", and give contamination flags a concrete species label instead of none.
 
-        The resulting database (~20 genomes, ~20–25 MB) consists of three binary files:
-        - `hash.k2d` — k-mer hash table
-        - `opts.k2d` — build options and parameters
-        - `taxo.k2d` — taxonomy tree
+        The resulting database (~307 genomes, ~78 MB) consists of three binary files:
+        - `hash.k2d`: k-mer hash table
+        - `opts.k2d`: build options and parameters
+        - `taxo.k2d`: taxonomy tree
 
         `data/kraken2_ng/` is small enough to bake directly into the Docker image
-        (`COPY . .` in the `Dockerfile`, which runs this script during the build) —
+        (`COPY . .` in the `Dockerfile`, which runs this script during the build):
         no separate volume or per-machine download step is needed.
 
         **Classification command (per sample)**
@@ -149,7 +137,7 @@ def render() -> None:
         """)
 
     st.markdown("---")
-    st.markdown("## Module 1 (cont.) — De Novo Assembly")
+    st.markdown("## Module 1 (cont.): De Novo Assembly")
 
     st.markdown("### SPAdes")
     st.markdown("""
@@ -170,31 +158,68 @@ def render() -> None:
     results folder.
     """)
 
-    st.markdown("### Assembly Quality — QUAST")
+    st.markdown("### Assembly Quality: Contiguity Metrics")
     st.markdown("""
-    QUAST (Quality Assessment Tool for Genome Assemblies) evaluates assembly contiguity.
-    The platform reports the following metrics directly in the UI:
+    Contiguity statistics are computed directly from the assembly FASTA with Biopython:
+    no external reference genome is used, since comparing a real clinical isolate against
+    any single fixed reference strain would conflate genuine inter-strain divergence with
+    assembly errors. The platform reports the following metrics directly in the UI:
 
     | Metric | Description |
     |---|---|
     | **Contigs** | Total number of assembled contigs |
     | **Total length** | Sum of all contig lengths (Mb) |
-    | **N50** | Contig length at which 50% of the assembly is covered (kb) |
+    | **N50 / N90** | Contig length at which 50% / 90% of the assembly is covered (kb) |
+    | **L50 / L90** | Number of contigs needed to reach 50% / 90% of the assembly |
+    | **auN** | Length-weighted mean contig length (Σ length² ÷ total length): a single-number contiguity summary less sensitive to assembly boundary effects than N50 alone |
     | **GC content** | GC percentage of the assembled genome |
 
-    For a typical *N. gonorrhoeae* isolate (genome size ~2.1 Mb), a good assembly should
-    have <200 contigs, total length 2.0–2.2 Mb, N50 >50 kb, and GC ~52%.
+    **Pass/caution/fail thresholds** follow the CDC AR Lab Network external quality
+    assessment criteria for *N. gonorrhoeae* WGS [15]: at least 2 of the 3 metrics below
+    must meet a tier's bar for the assembly to be scored at that tier.
+
+    | Tier | Contigs | N50 | Total length |
+    |---|---|---|---|
+    | Pass | ≤150 | >30 kb | 2.0–2.2 Mb |
+    | Caution | ≤180 | >20 kb | 1.8–2.2 Mb |
+
+    Core genome completeness (BLASTN, below) and GC% (50–56%) are independent hard-fail
+    checks specific to this platform, not part of the CDC criteria. The CDC source also
+    defines a species-purity gate (≥90% pass / ≥85% caution reads identified as
+    *N. gonorrhoeae*) and a coverage gate (≥40× pre-submission, ≥10× post-submission);
+    this platform applies the ≥40× coverage bar during read QC (Module 1) and evaluates
+    species purity separately via Kraken2, rather than merging them into this assembly-stage
+    score. The CDC criteria also include an "MLST matches reference" gate, which applies
+    only to CDC's own reference-isolate proficiency panel and has no equivalent for
+    arbitrary clinical samples, so it is not implemented here.
+    """)
+
+    st.markdown("### Core Genome Completeness: BLASTN")
+    st.markdown("""
+    In addition to the contiguity metrics above, assembly completeness is assessed against a
+    curated *N. gonorrhoeae* core gene set (1,713 genes), using BLASTN presence/absence
+    screening (≥90% identity, ≥80% query coverage). The reported **Core genes %** is the
+    percentage of these genes found present and intact in the assembly.
+
+    This replaced an earlier genome-size-ratio metric (assembly length ÷ reference genome
+    length), which could look deceptively high for an assembly that is the right *size* but
+    missing or fragmenting real genes, and a later chewBBACA/cgMLST-based version, which reused
+    the Module 3 clustering scheme (scheme 62, 1,638 loci) but added roughly two minutes of
+    allele calling per genome to Module 1 QC. Samples below 90% core genome completeness are
+    flagged in the assembly QC status, this threshold is checked upstream of AMR profiling,
+    since a genome missing core loci may also be missing the resistance-panel genes needed for
+    a reliable AMR call.
     """)
 
     st.markdown("---")
-    st.markdown("## Module 2 — AMR Profiling")
+    st.markdown("## Module 2: AMR Profiling")
 
     st.markdown("### Resistance Gene Database")
     st.markdown("""
     Two sets of reference sequences were curated from NCBI RefSeq and the literature:
     """)
 
-    st.markdown("**Chromosomal resistance genes** — variant calling (SNP detection)")
+    st.markdown("**Chromosomal resistance genes**: variant calling (SNP detection)")
     st.markdown("""
     | Gene | Product | Resistance phenotype | Key mutations |
     |---|---|---|---|
@@ -204,7 +229,7 @@ def render() -> None:
     | `mtrR` | MtrCDE efflux pump repressor | Efflux pump overexpression | A39T |
     | `porB` | Outer membrane porin B | Reduced beta-lactam permeability | G120K, A121D, G120D |
     | `23SrRNA` | 23S ribosomal RNA | Azithromycin resistance | A2045G (high-level), C2597T (moderate) |
-    | `blaTEM-1` | TEM-1 beta-lactamase | Penicillin resistance (chromosomal context) | — |
+    | `blaTEM-1` | TEM-1 beta-lactamase | Penicillin resistance (chromosomal context) | N/A |
     """)
 
     st.markdown("**Plasmid resistance genes**. Presence/absence detection")
@@ -237,14 +262,15 @@ def render() -> None:
         The `.fai` index is required by BCFtools for variant calling against individual gene references.
         """)
 
-    st.markdown("### Alignment — Minimap2")
+    st.markdown("### Alignment: Minimap2")
     st.markdown("""
     Each assembled contig file is aligned against every reference gene sequence independently
-    using Minimap2 with the `asm5` preset, which is optimised for species assembled
-    contig alignment (<5% sequence divergence):
+    using Minimap2 with the `asm20` preset, which tolerates up to ~20% sequence divergence:
+    needed for genes with distant or mosaic alleles (e.g. mosaic *penA*, mosaic *mtrR*/*mtrD*
+    promoter blocks), where `asm5` (<5% divergence) would fail to align:
 
     ```bash
-    minimap2 -a -x asm5 <ref_gene.fasta> <contigs.fasta>
+    minimap2 -a -x asm20 <ref_gene.fasta> <contigs.fasta>
     ```
 
     The SAM output is converted to sorted, indexed BAM with samtools:
@@ -255,7 +281,7 @@ def render() -> None:
     ```
     """)
 
-    st.markdown("### Variant Calling — BCFtools")
+    st.markdown("### Variant Calling: BCFtools")
     st.markdown("""
     SNPs are called from the BAM alignment against each gene reference using a two-step
     BCFtools pipeline:
@@ -267,7 +293,33 @@ def render() -> None:
     - `mpileup`: piles up reads at each position to generate genotype likelihoods
     - `call -mv`: calls multiallelic SNPs and indels; `-v` outputs only variant sites
 
-    Indels are filtered out during VCF parsing — only single-nucleotide substitutions are considered.
+    Both SNPs and in-frame indels are parsed from the VCF. SNPs that fall in the same codon
+    are combined before translation, so compound multi-nucleotide changes (e.g. three adjacent
+    SNPs forming G120K) are reported as the correct single amino-acid substitution rather than
+    three separate ones. In-frame insertions/deletions (length a multiple of 3) are reported as
+    `ins<codon>` / `del<AA><codon>`; frameshift indels are discarded, as no clean codon-level
+    notation applies.
+    """)
+
+    st.markdown("### Sequence Typing: MLST and NG-STAR")
+    st.markdown("""
+    Two independent PubMLST typing schemes are run against every assembly, using a shared
+    BLAST-based allele-calling engine: each locus is BLASTed against its local allele-sequence
+    set, and the best hit is classified as **exact** (≥99.9% identity, ≥95% coverage), **closest
+    known** (≥95% identity, ≥80% coverage, reported with a `~` prefix), or **new**. A sequence
+    type (ST) is only assigned when *all* loci in the scheme resolve to an exact match against
+    the cached PubMLST profile table: a single inexact or novel locus is enough to leave the
+    ST undetermined (`?`) rather than guess the closest one.
+
+    - **MLST** (7 loci: `abcZ`, `adk`, `aroE`, `fumC`, `gdh`, `pdhC`, `pgm`): the standard
+      *Neisseria* multilocus sequence typing scheme, used for general strain identification
+      and population structure.
+    - **NG-STAR** [14] (7 loci: `penA`, `mtrR`, `porB`, `ponA`, `gyrA`, `parC`, `23SrRNA`): an
+      AMR-focused typing scheme covering the same genes tracked by the resistance-mutation
+      panel above, enabling comparison against globally reported NG-STAR clonal complexes.
+
+    Both schemes cache their PubMLST profile tables locally (30-day TTL) to avoid querying
+    the PubMLST REST API on every run.
     """)
 
     st.markdown("### European 2020 (IUSTI) Interpretation Rules")
@@ -290,8 +342,8 @@ def render() -> None:
     | parC D86N/S87N/R | Ciprofloxacin resistance (additive) | Avoid ciprofloxacin |
     | mtrR A39T | Efflux pump overexpression | Monitor MIC |
     | porB G120K/A121D/G120D | Reduced beta-lactam permeability | Monitor MIC |
-    | blaTEM-1 (plasmid) | PPNG — penicillin resistance | Avoid penicillin/ampicillin |
-    | tet-M (plasmid) | TRNG — tetracycline resistance | Avoid tetracycline/doxycycline |
+    | blaTEM-1 (plasmid) | PPNG: penicillin resistance | Avoid penicillin/ampicillin |
+    | tet-M (plasmid) | TRNG: tetracycline resistance | Avoid tetracycline/doxycycline |
     """)
 
     st.markdown("### Recommended Treatment Regimens")
@@ -300,7 +352,7 @@ def render() -> None:
     Guidelines** (Unemo et al., 2020). Regimens are assigned per detected resistance phenotype
     and displayed in the clinical interpretation panel.
 
-    **First-line — uncomplicated urogenital, anorectal infection (susceptibility unknown)** [1C]
+    **First-line: uncomplicated urogenital, anorectal infection (susceptibility unknown)** [1C]
     > Ceftriaxone **1g IM** (single dose) + azithromycin **2g orally** (single dose)
 
     | Clinical situation | Recommended regimen |
@@ -327,31 +379,73 @@ def render() -> None:
     """)
 
     st.markdown("""
-    **Genomic Resistance Score** — individual mutation failure-probability weights are summed
-    and capped at an intermediate ceiling (0.65), leaving headroom above single-mutation scores
-    for two literature-grounded escalation factors:
+    **Genomic Resistance Score**: a categorical score, not a sum of per-mutation weights.
+    Detected mutations are first mapped to CDC phenotypes and, from these, to the affected
+    antibiotic classes; the sample is then assigned to a single resistance category, and the
+    category alone determines the score:
 
-    - **Last-line combination bonus (+0.30)** — applied when the sample carries mutations
-      affecting both currently recommended therapies (ceftriaxone **and** azithromycin), the
-      pattern that defines extensively drug-resistant (XDR-GC) gonococci in the Unemo & Shafer
-      (2014) framework, and matches the combined ceftriaxone/high-level-azithromycin resistance
-      reported in recent XDR case reports (Austria 2022, France 2022–2023, Canada, Germany 2025),
-      described as the emerging threat of untreatable gonorrhoea.
-    - **Cumulative multi-class bonus (+0.08 per additional class)** — reflects the class-counting
-      structure of the MDR-GC / XDR-GC definitions (Category I agent plus 2, respectively 3 or
-      more, Category II agents), and the additive/epistatic effect of accumulating resistance
-      mechanisms reported in genomic AMR-prediction studies of *N. gonorrhoeae*.
+    | Category | Criterion | Score |
+    |---|---|---|
+    | Susceptible | No resistance phenotypes detected | 0.0 |
+    | Low resistance | Only minor mechanisms (efflux upregulation, reduced susceptibility) | 0.2 |
+    | Moderate resistance | ≥1 moderate-impact phenotype (e.g. ciprofloxacin resistance) | 0.4 |
+    | High resistance | ≥1 high-impact phenotype (ceftriaxone or high-level azithromycin) | 0.6 |
+    | MDR | ≥2 distinct antibiotic classes affected | 0.8 |
+    | XDR | Ceftriaxone **and** azithromycin affected, plus ≥2 further classes | 1.0 |
 
-    The final score is capped at 1.0. It is used for risk stratification only; it does not
-    replace clinical susceptibility testing. The per-mutation base weights are internally
-    calibrated estimates informed by the general literature on mutation impact, not a direct
-    reproduction of published quantitative values — treat the base weights as a heuristic and
-    the escalation structure (last-line combination, multi-class accumulation) as the
-    literature-grounded component.
+    **This is an ordinal severity index, not a calibrated probability.** The category
+    boundaries reflect real resistance biology (see below), but the even 0.2 spacing between
+    them is an internal convention for ranking and sorting samples: it is not derived from any
+    clinical outcome study, and the score does not mean "an X% chance of treatment failure."
+    Only the ordering (susceptible < low < moderate < high < MDR < XDR) is meaningful; the
+    numeric gaps between categories are not. Accordingly, the underlying function is named
+    `resistance_severity_score()`, not a "probability" function.
+
+    The MDR/XDR thresholds follow the MDR-GC / XDR-GC definitions of Unemo & Shafer (2014) [11]:
+    XDR-GC requires resistance to both currently recommended therapies (ceftriaxone and
+    azithromycin) plus ≥2 additional antibiotic classes: the combined ceftriaxone/high-level-
+    azithromycin pattern reported in recent XDR case reports (Austria, France, Canada, Germany)
+    [12] as the emerging threat of untreatable gonorrhoea. When counting affected classes,
+    low-impact phenotypes (e.g. efflux-pump overexpression) are excluded, so that a single minor
+    mechanism (which can trigger two related low-impact phenotypes at once) cannot by itself
+    push a sample into the MDR category.
+
+    This replaced an earlier per-mutation weighted-sum design: the individual numeric weights in
+    that design had no direct literature source beyond the category a mutation already belonged
+    to, so the score was simplified to use only the categorical structure, removing the
+    uncited intermediate numbers. The score is used for risk stratification only; it does not
+    replace clinical susceptibility testing.
+    """)
+
+    st.markdown("### Non-AMR Markers: Essential Gene Variants")
+    st.markdown("""
+    Shown as a separate, clearly-labelled informational section: these variants have **no
+    effect** on the resistance category, phenotype calls, or the Genomic Resistance Score. They
+    are detected with the same alignment and variant-calling engine as the resistance panel
+    above (Minimap2 `asm20` + BCFtools), applied to nine genes with no known role in
+    antimicrobial resistance, but with core functions in the bacterium:
+
+    | Gene | Process | Product |
+    |---|---|---|
+    | `comA` | Natural transformation (competence) | DNA uptake across the outer membrane |
+    | `ftsZ` | Cell division | Septum formation: tubulin homologue |
+    | `recA` | DNA repair / recombination | Homologous recombination, SOS response |
+    | `pilT`, `pilT2` | Motility (type IV pilus) | Twitching motility: retraction ATPase |
+    | `tonB` | Iron acquisition | Energy transducer for TonB-dependent transporters |
+    | `tbpB` | Iron acquisition | Transferrin-binding protein |
+    | `fur` | Iron acquisition / stress response | Master regulator of iron uptake and oxidative stress |
+    | `rpoH` | Stress response | Sigma-32 factor: activates heat-shock gene expression |
+
+    Reference sequences were extracted directly from the *N. gonorrhoeae* FA1090 genome
+    (GenBank AE004969.1), using GenBank annotation coordinates. This screen exists to
+    characterise strain-level genomic diversity beyond the resistance phenotype: for example,
+    whether variation in these genes correlates with the presence of resistance mutations,
+    which would suggest broader selective pressure rather than neutral background variation.
+    These are not clinically validated markers.
     """)
 
     st.markdown("---")
-    st.markdown("## Module 3 — Phylogenetic Analysis")
+    st.markdown("## Module 3: Phylogenetic Analysis")
 
     st.markdown("### Reference Backbone")
     st.markdown("""
@@ -369,7 +463,7 @@ def render() -> None:
 
         | Strain | Key resistance profile |
         |---|---|
-        | WHO F | Chromosomally mediated resistance (CMRNG) — penicillin |
+        | WHO F | Chromosomally mediated resistance (CMRNG): penicillin |
         | WHO G | Fully susceptible |
         | WHO K | Penicillinase-producing (PPNG) |
         | WHO L | Fully susceptible |
@@ -382,7 +476,7 @@ def render() -> None:
         | WHO W | Ceftriaxone reduced susceptibility |
         | WHO X | Ceftriaxone + azithromycin reduced susceptibility |
         | WHO Y | Ciprofloxacin + azithromycin resistant |
-        | WHO Z | Multi-drug resistant — ceftriaxone + azithromycin |
+        | WHO Z | Multi-drug resistant: ceftriaxone + azithromycin |
 
         Genome sequences retrieved from NCBI GenBank (BioProject PRJEB14414 and PRJNA342535).
         """)
@@ -424,7 +518,7 @@ def render() -> None:
 
     with tab_out:
         st.markdown("""
-        **2 outgroup genomes** — phylogenetically close but distinct *Neisseria* species
+        **2 outgroup genomes**: phylogenetically close but distinct *Neisseria* species
         used to root the tree and provide evolutionary context:
 
         | Genome | Species | Source |
@@ -437,7 +531,7 @@ def render() -> None:
         *N. meningitidis* serves as a more distant reference point.
         """)
 
-    st.markdown("### SKA2 — Split K-mer Analysis")
+    st.markdown("### SKA2: Split K-mer Analysis")
     st.markdown("""
     SKA2 (Split K-mer Analysis version 2) computes pairwise genomic distances between
     assemblies using split k-mers pairs of 15 bp flanking sequences with a central variable
@@ -473,7 +567,7 @@ def render() -> None:
 
     st.markdown("### Tree Inference Method")
     st.markdown("""
-    **Fast NJ — RapidNJ**
+    **Fast NJ: RapidNJ**
     Constructs a Neighbour-Joining tree directly from the SKA2 pairwise distance matrix.
     Suitable for local contextualisation within already-close groups and rapid outbreak screening.
     No bootstrap support values.
@@ -484,32 +578,20 @@ def render() -> None:
 
     st.markdown("### Genogroup Clustering")
     st.markdown("""
-    Genogroup assignment uses **single-linkage** hierarchical clustering on the SKA2 pairwise
-    SNP distance matrix at a fixed threshold of **≤ 2 000 SNPs** — the same algorithm used
-    for outbreak (≤ 200 SNP) and transmission (≤ 20 SNP) clustering, extended to a higher,
-    genogroup-level tier.
+    **Genogroup (cgMLST, ≤400 allele differences).** Single-linkage clustering on the
+    chewBBACA [13] cgMLST allele-difference matrix at a fixed threshold of **≤400 AD**,
+    the same criterion used by Pathogenwatch for *N. gonorrhoeae* genomic clusters
+    (PubMLST scheme 62, 1,638 loci). It is the only source of the tree's cluster coloring.
 
-    ```python
-    from scipy.cluster.hierarchy import linkage, fcluster
-    from scipy.spatial.distance import squareform
-
-    Z      = linkage(squareform(matrix.values), method="single")
-    labels = fcluster(Z, t=2000, criterion="distance")
-    ```
-
-    This mirrors the BIGSdb / cgMLST two-tier pattern — fixed absolute thresholds at both
-    the outbreak and genogroup level — and is consistent with the single-linkage method
-    already used throughout the platform. Because the threshold is absolute, genogroup
-    assignments are **directly comparable across runs**: adding or removing samples does
-    not shift the cut-point.
-
-    **Methodological note.** The 2 000 SNP threshold has not been formally calibrated
-    against a curated *N. gonorrhoeae* reference dataset. It is a conservative default
-    chosen to be above the outbreak tier (200 SNP) and to broadly capture clonal-complex
-    boundaries as described in the SKA2/PopPUNK literature. For publication, this threshold
-    should be validated against an independent collection with known clonal-complex
-    assignments (e.g. PubMLST CC-level grouping) and adjusted accordingly. Genogroup
-    numbers are within-run ordinal identifiers unless explicitly validated.
+    **Methodological note.** Genogroup assignment requires chewBBACA, a locally available
+    cgMLST schema, and an assembled genome. Module 3 only accepts assembled genomes
+    (FASTA): raw FASTQ reads are uploaded in Module 1 (Quality Control & Assembly) or via
+    the Full Pipeline, both of which assemble the reads before the genome reaches this
+    clustering step, so every sample handed to Module 3 already qualifies for genogroup
+    assignment. If chewBBACA or the schema is unavailable, the Genogroup field is left
+    blank for that run. Because the threshold is absolute, cluster assignments are
+    directly comparable across runs: adding or removing samples does not shift the
+    cut-point.
     """)
 
     st.markdown("---")
@@ -517,9 +599,9 @@ def render() -> None:
     st.markdown("""
     The platform is orchestrated by `docker-compose.yml` and consists of two services:
 
-    - **ng-platform** — Streamlit web interface, exposed on **port 8501** (6 GB memory
+    - **ng-platform**: Streamlit web interface, exposed on **port 8501** (6 GB memory
       limit). Serves the UI and coordinates job submission.
-    - **ng-worker** — Background analysis worker that executes the bioinformatics pipeline.
+    - **ng-worker**: Background analysis worker that executes the bioinformatics pipeline.
       Uses the same Docker image as `ng-platform` but runs `python -m backend.worker`.
       Depends on `ng-platform` being healthy before starting.
 
@@ -535,15 +617,16 @@ def render() -> None:
     |---|---|---|
     | `./app` | `/workspace/app` | Application code (live-reload) |
     | `./backend` | `/workspace/backend` | Analysis modules (live-reload) |
-    | `./data/phylogeny` | `/workspace/data/phylogeny` | Backbone sketch, pyngoST DB, cgMLST schema |
+    | `./data/phylogeny` | `/workspace/data/phylogeny` | Backbone sketch, pyngoST DB, cgMLST schema (all versioned in the repo) |
     | `ng_projects` (named) | `/workspace/app/projects` | Project data and sample uploads |
     | `ng_phylo_runs` (named) | `/workspace/backend/phylogeny/runs` | Phylogeny run outputs |
-    | `ng_pyngost_db` (named) | `/workspace/data/phylogeny/pyngost_db` | pyngoST allele database |
-    | `ng_cgmlst_schema` (named) | `/workspace/data/phylogeny/cgmlst_schema` | cgMLST schema |
     | `ng_results` (named) | `/workspace/results` | Analysis result files |
 
-    Named volumes (`ng_projects`, `ng_phylo_runs`, `ng_pyngost_db`, `ng_cgmlst_schema`,
-    `ng_results`) are managed by Docker and persist across container recreations.
+    Named volumes (`ng_projects`, `ng_phylo_runs`, `ng_results`) are managed by Docker
+    and persist across container recreations. The pyngoST database and cgMLST schema
+    are not named volumes: they are ordinary files under `data/phylogeny/`, versioned
+    in the repository, so a fresh `docker compose up --build` on a new machine already
+    has them, no download step needed.
     """)
 
     with st.expander("Build and run commands"):
@@ -558,9 +641,8 @@ def render() -> None:
         # Rebuild without cache
         docker compose build --no-cache
 
-        # Access the platform
-        # Landing page:  http://localhost         (port 80)
-        # Platform:      http://localhost:8501    (direct)
+        Access the platform
+        # Platform:      http://localhost:8501
         ```
         """)
 
@@ -598,7 +680,7 @@ def render() -> None:
     doi: 10.1177/0956462420948791
 
     [10] Centers for Disease Control and Prevention. Sexually Transmitted Infections Treatment
-    Guidelines, 2021 — Updated 2024. *MMWR Recomm Rep*, 70(4):1–187, 2021.
+    Guidelines, 2021: Updated 2024. *MMWR Recomm Rep*, 70(4):1–187, 2021.
 
     [11] Unemo M, Shafer WM. Antimicrobial resistance in *Neisseria gonorrhoeae* in the 21st
     century: past, evolution, and future. *Clinical Microbiology Reviews*, 27(3):587–613, 2014.
@@ -608,6 +690,21 @@ def render() -> None:
     *Neisseria gonorrhoeae* infection combining ceftriaxone-resistance and high-level azithromycin
     resistance, France, November 2022 and May 2023. *Eurosurveillance*, 28(37):2300456, 2023.
     doi: 10.2807/1560-7917.ES.2023.28.37.2300456
+
+    [13] Silva M, Machado MP, Silva DN, et al. chewBBACA: A complete suite for gene-by-gene
+    schema creation and strain identification. *Microbial Genomics*, 4(3), 2018.
+    doi: 10.1099/mgen.0.000166
+
+    [14] Demczuk W, Sidhu S, Unemo M, et al. *Neisseria gonorrhoeae* Sequence Typing for
+    Antimicrobial Resistance (NG-STAR): a novel antimicrobial resistance multilocus typing
+    scheme for tracking global dissemination of *N. gonorrhoeae* strains. *Journal of Clinical
+    Microbiology*, 55(5), 2017. doi: 10.1128/JCM.00100-17: *volume/page details as recalled;
+    verify against the published version before citing in the thesis.*
+
+    [15] Reimche JL, Smith AC, Pham CD, Schmerer MW, Cartee JC, Bolden CB, Kersh EN, Gernert
+    KM, et al. Establishing a *Neisseria gonorrhoeae* whole-genome sequencing external quality
+    assessment for the Antimicrobial Resistance Laboratory Network (AR Lab Network) regional
+    laboratories. *Microbiology Spectrum*, 14(3), 2026. doi: 10.1128/spectrum.02256-25
     """)
 
 

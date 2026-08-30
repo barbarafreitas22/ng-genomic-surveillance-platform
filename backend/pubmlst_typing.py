@@ -25,8 +25,8 @@ def pubmlst_headers() -> dict:
 
 def query_locus_local(gene: str, assembly: Path, allele_dir: Path) -> str:
     """
-    BLAST whole assembly directly against the allele FASTA.
-    The coverage is measured against the allele (scov).
+    BLAST assembly directly against the allele FASTA.
+    The coverage is measured against the allele .
 
     Thresholds:
     >= 99.9 and scov >= 0.95  -> exact allele
@@ -82,7 +82,7 @@ def query_locus_local(gene: str, assembly: Path, allele_dir: Path) -> str:
         return "new"
 
     sseqid, pident, scov = best
-    # PubMLST FASTA headers: >abcZ_1, >NG_penA_14, >'mtrR_3, ...
+    # PubMLST FASTA headers
     allele_id = sseqid.rsplit("_", 1)[-1]
 
     if pident >= 99.9 and scov >= 0.95:
@@ -105,7 +105,7 @@ def _parse_profiles_csv(text: str, columns: list[str]) -> dict[tuple, str]:
 
 
 def load_profiles(cache_path: Path, scheme_id: int, columns: list[str]) -> dict[tuple, str]:
-    """Load ST profiles for a PubMLST scheme, using a local TSV cache (30-day TTL)."""
+    """Load ST profiles for a PubMLST scheme, using a local TSV cache"""
     if cache_path.exists():
         age_days = (time.time() - cache_path.stat().st_mtime) / 86400
         if age_days < _CACHE_TTL_DAYS:

@@ -53,14 +53,17 @@ def load_tree_newick(tree_path):
         return None, f"Could not load tree: {e}"
 
 
-def newick_to_tree_json(newick_str, clusters=None, upload_names=None, backbone_meta=None):
+def newick_to_tree_json(newick_str, clusters=None, upload_names=None, backbone_meta=None, resistance=None):
     """
     Convert Newick string to hierarchical JSON for D3 dendrogram.
     Node colours: uploaded = red, outgroup = grey, reference panel = blue.
     backbone_meta: dict mapping node name → metadata dict (from backbone_metadata.json).
+    resistance: optional dict mapping node name → "resistant"/"susceptible"/"no_data",
+    used to highlight nodes affected by a selected antibiotic.
     """
     clusters      = clusters      or {}
     backbone_meta = backbone_meta or {}
+    resistance    = resistance    or {}
     _upload_set   = set(upload_names) if upload_names else set()
     newick_str = reroot_tree(newick_str)
     trees = newick.loads(newick_str)
@@ -97,12 +100,13 @@ def newick_to_tree_json(newick_str, clusters=None, upload_names=None, backbone_m
             length = 0.0
 
         d = {
-            "name":    n.name or "",
-            "id":      node_id,
-            "length":  length,
-            "type":    node_type,
-            "cluster": cluster_id,
-            "color":   _color(node_type),
+            "name":       n.name or "",
+            "id":         node_id,
+            "length":     length,
+            "type":       node_type,
+            "cluster":    cluster_id,
+            "color":      _color(node_type),
+            "resistance": resistance.get(node_id),
         }
         if node_id in backbone_meta:
             d["backbone_info"] = backbone_meta[node_id]

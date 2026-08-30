@@ -5,7 +5,6 @@ import subprocess
 from pathlib import Path
 import configparser
 
-import pandas as pd
 from Bio import SeqIO
 
 logger = logging.getLogger(__name__)
@@ -15,15 +14,50 @@ try:
 except ImportError:
     _psutil = None
 
+
+def _cgroup_memory_gb() -> float | None:
+    v2 = Path("/sys/fs/cgroup/memory.max")
+    if v2.exists():
+        value = v2.read_text().strip()
+        if value != "max":
+            try:
+                return int(value) / (1024 ** 3)
+            except ValueError:
+                pass
+
+    v1 = Path("/sys/fs/cgroup/memory/memory.limit_in_bytes")
+    if v1.exists():
+        try:
+            value = int(v1.read_text().strip())
+            if value < (1 << 60):
+                return value / (1024 ** 3)
+        except ValueError:
+            pass
+
+    return None
+
+
 def _spades_resources():
     threads = min(os.cpu_count() or 4, 8)
+    container_mem = _cgroup_memory_gb()
+
+    if container_mem is not None:
+        memory = int(container_mem * 0.70)
+        memory = max(memory, 2)
+        memory = min(memory, 8)
+        return str(threads), str(memory)
+
     if _psutil is not None:
-        available_gb = _psutil.virtual_memory().available / 1e9
-        memory = min(int(available_gb * 0.35), 32)
-        return str(threads), str(max(memory, 4))
+        available_gb = _psutil.virtual_memory().available / (1024 ** 3)
+        memory = int(available_gb * 0.50)
+        memory = max(memory, 2)
+        memory = min(memory, 8)
+        return str(threads), str(memory)
+
     return str(threads), "4"
 
-from .paths import PROJECT_ROOT, CONFIG_PATH, REFERENCE_FA1090
+
+from .paths import CONFIG_PATH, RESULTS_DIR
 from .models import AssemblyResult, AssemblyStats
 
 config = configparser.ConfigParser()
@@ -31,74 +65,134 @@ config.read(CONFIG_PATH)
 paths = config["PATHS"]
 
 SPADES_PATH = paths.get("SPADES", "spades.py")
-QUAST_PATH  = paths.get("QUAST", "quast.py")
-
-
-def run_cmd(cmd):
-    process = subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
-    )
-    out, err = process.communicate()
-    return process.returncode, out, err
 
 
 def _run_spades(r1, r2, outdir):
     outdir.mkdir(parents=True, exist_ok=True)
-    _threads, _memory = _spades_resources()
+
+    threads, memory = _spades_resources()
+
     spades_out = outdir / "spades_output"
-    read_args = ["--pe1-1", str(r1), "--pe1-2", str(r2)] if r2 else ["--s1", str(r1)]
-    label     = "SPAdes PE" if r2 else "SPAdes SE"
+    log_path = outdir / "spades.log"
+
+    if r2:
+        read_args = [
+            "--pe1-1", str(r1),
+            "--pe1-2", str(r2),
+        ]
+        label = "SPAdes PE"
+    else:
+        read_args = [
+            "--s1", str(r1),
+        ]
+        label = "SPAdes SE"
+
     cmd = [
-        SPADES_PATH, *read_args,
-        "-o",        str(spades_out),
-        "--threads", _threads,
-        "--memory",  _memory,
-        "--only-assembler",
-        "-k", "33,55,77",
-        "--cov-cutoff", "auto",
+        SPADES_PATH,
+        "--isolate",
+        *read_args,
+        "-o", str(spades_out),
+        "--threads", threads,
+        "--memory", memory,
     ]
-    rc, out, err = run_cmd(cmd)
-    logs = f"[{label}]\n{out}\n{err}\n"
-    if rc != 0:
-        if rc in (-9, 137):
-            logs += f"\n[ERROR] SPAdes killed by OOM (rc={rc}) — cgroup memory limit reached.\n"
-        return None, logs
+
+    logger.info(
+        "Assembly | %s | SPAdes threads=%s memory=%sGB",
+        label,
+        threads,
+        memory,
+    )
+
+    with open(log_path, "w", encoding="utf-8") as log:
+        process = subprocess.run(
+            cmd,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+
+    logs = log_path.read_text(encoding="utf-8", errors="replace")
+
+    if process.returncode != 0:
+        if process.returncode in (-9, 137):
+            logs += (
+                "\n[ERROR] SPAdes killed by OOM "
+                f"(rc={process.returncode}) — cgroup memory limit reached.\n"
+            )
+        else:
+            logs += (
+                f"\n[ERROR] SPAdes failed (rc={process.returncode}).\n"
+            )
+        return None, f"[{label}]\n{logs}"
+
     contigs = spades_out / "contigs.fasta"
+
     if not contigs.exists():
         logs += "\n[ERROR] contigs.fasta not found.\n"
-        return None, logs
-    return contigs, logs
+        return None, f"[{label}]\n{logs}"
+
+    return contigs, f"[{label}]\n{logs}"
 
 
-def run_assembly_pipeline(sample_id, r1, r2=None, outdir=None,
-                          pre_trimmed: bool = False):
+def run_assembly_pipeline(
+    sample_id,
+    r1,
+    r2=None,
+    outdir=None,
+    pre_trimmed: bool = False,
+    keep_spades_output: bool = False,
+):
+    """
+    De novo assemble reads with SPAdes. Assembly-only mode with
+    isolate optimisation and container-aware resource allocation.
+    Quality statistics are computed afterwards.
+
+    Args:
+        sample_id: identifier used to name the output directory.
+        r1, r2: trimmed read paths (r2 None for single-end).
+        outdir: output directory; defaults to RESULTS_DIR/assembly/sample_id.
+        pre_trimmed: retained for call-site compatibility.
+        keep_spades_output: if True, keeps spades_output/ and its files.
+
+    Returns:
+        AssemblyResult(contigs, logs).
+        contigs is None if SPAdes failed or was OOM-killed.
+    """
     if outdir is None:
-        outdir = PROJECT_ROOT / "results" / "assembly" / sample_id
+        outdir = RESULTS_DIR / "assembly" / sample_id
     else:
         outdir = Path(outdir)
 
-    logger.info("Assembly | %s | start pe=%s", sample_id, r2 is not None)
+    logger.info(
+        "Assembly | %s | start pe=%s",
+        sample_id,
+        r2 is not None,
+    )
 
     contigs, logs = _run_spades(r1, r2, outdir)
 
     if contigs and contigs.exists():
         canonical = outdir / f"{sample_id}.fasta"
+
         if contigs != canonical:
             shutil.copy2(contigs, canonical)
             tool_dir = contigs.parent
             contigs = canonical
-            shutil.rmtree(tool_dir, ignore_errors=True)
 
-    ref = REFERENCE_FA1090 if REFERENCE_FA1090.exists() else None
-
-    if contigs and contigs.exists():
-        _, qlogs = run_quast(contigs, outdir, ref)
-        logs += qlogs
+            if not keep_spades_output:
+                shutil.rmtree(tool_dir, ignore_errors=True)
 
     if contigs and contigs.exists():
-        logger.info("Assembly | %s | done contigs=%s", sample_id, contigs.name)
+        logger.info(
+            "Assembly | %s | done contigs=%s",
+            sample_id,
+            contigs.name,
+        )
     else:
-        logger.error("Assembly | %s | failed — no contigs produced", sample_id)
+        logger.error(
+            "Assembly | %s | failed — no contigs produced",
+            sample_id,
+        )
 
     return AssemblyResult(
         contigs=contigs,
@@ -108,139 +202,202 @@ def run_assembly_pipeline(sample_id, r1, r2=None, outdir=None,
 
 ASSEMBLY_QC_THRESHOLDS = {
     "min_genome_fraction": 90.0,
-    "min_n50":             25_000,
-    "max_contigs":           300,
-    "min_total_len":    1_900_000,
-    "max_total_len":    2_500_000,
-    "min_gc":               50.0,
-    "max_gc":               56.0,
+    "min_gc": 50.0,
+    "max_gc": 56.0,
+    "pass": {
+        "max_contigs": 150,
+        "min_n50": 30_000,
+        "min_total_len": 2_000_000,
+        "max_total_len": 2_200_000,
+    },
+    "caution": {
+        "max_contigs": 180,
+        "min_n50": 20_000,
+        "min_total_len": 1_800_000,
+        "max_total_len": 2_200_000,
+    },
 }
 
 
-def parse_quast_report(quast_dir: Path) -> dict:
-    report = quast_dir / "report.tsv"
-    if not report.exists():
-        return {}
-    series = pd.read_csv(report, sep="\t", header=None, index_col=0).iloc[:, 0]
-    _int   = {"# misassemblies": "misassemblies", "# misassembled contigs": "misassembled_contigs", "NGA50": "nga50"}
-    _float = {"Genome fraction (%)": "genome_fraction", "Duplication ratio": "duplication_ratio",
-               "# mismatches per 100 kbp": "mismatches_per_100kbp", "# indels per 100 kbp": "indels_per_100kbp"}
-    out: dict = {}
-    for src, dst in _int.items():
-        if src in series.index:
-            try: out[dst] = int(float(series[src]))
-            except (ValueError, TypeError): pass
-    for src, dst in _float.items():
-        if src in series.index:
-            try: out[dst] = float(series[src])
-            except (ValueError, TypeError): pass
-    return out
+def _cdc_tier_hits(stats: dict, tier: dict) -> tuple[int, int, list[str]]:
+    hits, total, flags = 0, 0, []
+
+    nc = stats.get("n_contigs")
+    if nc is not None:
+        total += 1
+        ok = nc <= tier["max_contigs"]
+        hits += ok
+        flags.append(
+            f"Contigs {nc} ({'≤' if ok else '>'} {tier['max_contigs']})"
+        )
+
+    n50 = stats.get("n50")
+    if n50 is not None:
+        total += 1
+        ok = n50 > tier["min_n50"]
+        hits += ok
+        flags.append(
+            f"N50 {n50/1e3:.1f} kb "
+            f"({'>' if ok else '≤'} {tier['min_n50']/1e3:.0f} kb)"
+        )
+
+    tl = stats.get("total_len")
+    if tl is not None:
+        total += 1
+        ok = tier["min_total_len"] <= tl <= tier["max_total_len"]
+        hits += ok
+        flags.append(
+            f"Length {tl/1e6:.2f} Mb "
+            f"({'within' if ok else 'outside'} "
+            f"{tier['min_total_len']/1e6:.1f}–"
+            f"{tier['max_total_len']/1e6:.1f} Mb)"
+        )
+
+    return hits, total, flags
 
 
 def evaluate_assembly_qc(stats: dict) -> dict:
-    """
-    Evaluate assembly stats against ASSEMBLY_QC_THRESHOLDS.
-
-    Returns:
-        {
-          "status": "pass" | "warn" | "fail",
-          "flags":  [list of human-readable failure reasons],
-        }
-
-    "warn" = soft thresholds only (N50, contigs); "fail" = hard thresholds
-    (core genes, total length, GC).
-    """
     t = ASSEMBLY_QC_THRESHOLDS
-    flags: list[str] = []
+    hard_fail_flags: list[str] = []
     hard_fail = False
 
     gf = stats.get("completeness")
     if gf is not None and gf < t["min_genome_fraction"]:
-        flags.append(f"Core genes {gf:.1f}% < {t['min_genome_fraction']}%")
+        hard_fail_flags.append(
+            f"Core genes {gf:.1f}% < {t['min_genome_fraction']}%"
+        )
         hard_fail = True
-
-    tl = stats.get("total_len")
-    if tl is not None:
-        if tl < t["min_total_len"]:
-            flags.append(f"Assembly too short ({tl/1e6:.2f} Mb < {t['min_total_len']/1e6:.2f} Mb)")
-            hard_fail = True
-        elif tl > t["max_total_len"]:
-            flags.append(f"Assembly too long ({tl/1e6:.2f} Mb > {t['max_total_len']/1e6:.2f} Mb — possible contamination)")
-            hard_fail = True
 
     gc = stats.get("gc_pct")
     if gc is not None and not (t["min_gc"] <= gc <= t["max_gc"]):
-        flags.append(f"GC% {gc:.1f}% outside expected range {t['min_gc']}–{t['max_gc']}%")
+        hard_fail_flags.append(
+            f"GC% {gc:.1f}% outside expected range "
+            f"{t['min_gc']}–{t['max_gc']}%"
+        )
         hard_fail = True
 
-    n50 = stats.get("n50")
-    if n50 is not None and n50 < t["min_n50"]:
-        flags.append(f"N50 {n50/1e3:.1f} kb < {t['min_n50']/1e3:.0f} kb (fragmented)")
-
-    nc = stats.get("n_contigs")
-    if nc is not None and nc > t["max_contigs"]:
-        flags.append(f"{nc} contigs > {t['max_contigs']} (fragmented)")
-
     if hard_fail:
-        status = "fail"
-    elif flags:
-        status = "warn"
-    else:
-        status = "pass"
+        return {
+            "status": "fail",
+            "flags": hard_fail_flags,
+        }
 
-    return {"status": status, "flags": flags}
+    pass_hits, pass_total, pass_flags = _cdc_tier_hits(
+        stats,
+        t["pass"],
+    )
+
+    if pass_total and pass_hits >= min(2, pass_total):
+        return {
+            "status": "pass",
+            "flags": pass_flags,
+        }
+
+    caution_hits, caution_total, caution_flags = _cdc_tier_hits(
+        stats,
+        t["caution"],
+    )
+
+    if caution_total and caution_hits >= min(2, caution_total):
+        return {
+            "status": "caution",
+            "flags": caution_flags,
+        }
+
+    return {
+        "status": "fail",
+        "flags": caution_flags or pass_flags,
+    }
 
 
-def parse_contigs_stats(path: Path) -> AssemblyStats | None:
+def parse_contigs_stats(path: str | Path) -> AssemblyStats | None:
+    path = Path(path) if path else None
     if not path or not path.exists():
         return None
 
-    lengths, gc_count, total_bases = [], 0, 0
+    lengths = []
+    gc_count = 0
+    n_count = 0
+    total_bases = 0
+
     for record in SeqIO.parse(str(path), "fasta"):
         s = str(record.seq).upper()
         lengths.append(len(s))
         gc_count += s.count("G") + s.count("C")
+        n_count += s.count("N")
         total_bases += len(s)
 
     if not lengths:
         return None
 
     lengths.sort(reverse=True)
-    cum, n50 = 0, 0
-    for length in lengths:
-        cum += length
-        if cum >= total_bases / 2:
-            n50 = length
-            break
+
+    def _nx_lx(fraction: float) -> tuple[int, int]:
+        cum = 0
+
+        for i, length in enumerate(lengths, start=1):
+            cum += length
+
+            if cum >= total_bases * fraction:
+                return length, i
+
+        return 0, 0
+
+    n50, l50 = _nx_lx(0.5)
+    n90, l90 = _nx_lx(0.9)
+
+    auN = (
+        sum(length ** 2 for length in lengths) / total_bases
+        if total_bases
+        else 0.0
+    )
 
     _stats_d: dict = {
-        "n_contigs":   len(lengths),
-        "total_len":   total_bases,
-        "n50":         n50,
-        "largest":     lengths[0],
-        "gc_pct":      gc_count / total_bases * 100 if total_bases else 0.0,
-        "contigs_500": sum(1 for length in lengths if length >= 500),
+        "n_contigs": len(lengths),
+        "total_len": total_bases,
+        "n50": n50,
+        "n90": n90,
+        "l50": l50,
+        "l90": l90,
+        "auN": auN,
+        "largest": lengths[0],
+        "gc_pct": (
+            gc_count / total_bases * 100
+            if total_bases
+            else 0.0
+        ),
+        "contigs_500": sum(
+            1 for length in lengths
+            if length >= 500
+        ),
         "completeness": 0.0,
+        "avg_contig_len": (
+            total_bases / len(lengths)
+            if lengths
+            else 0.0
+        ),
+        "n_per_100kbp": (
+            n_count / total_bases * 1e5
+            if total_bases
+            else 0.0
+        ),
     }
 
-    quast_dir = path.parent / "quast"
-    quast = parse_quast_report(quast_dir)
-    for k in ("misassemblies", "misassembled_contigs", "nga50",
-              "duplication_ratio", "mismatches_per_100kbp", "indels_per_100kbp"):
-        if k in quast:
-            _stats_d[k] = quast[k]
-
     try:
-        from backend.phylogeny.cgmlst import cached_core_genome_completeness
-        core = cached_core_genome_completeness(str(path))
+        from backend.phylogeny.cgmlst import (
+            cached_core_genome_gene_count
+        )
+        core = cached_core_genome_gene_count(str(path))
     except Exception:
         core = None
+
     if core:
-        _stats_d["completeness"]     = core["core_completeness_pct"]
+        _stats_d["completeness"] = core["core_completeness_pct"]
         _stats_d["core_genes_found"] = core["core_genes_found"]
         _stats_d["core_genes_total"] = core["core_genes_total"]
 
     qc = evaluate_assembly_qc(_stats_d)
+
     return AssemblyStats(
         n_contigs=_stats_d["n_contigs"],
         total_len=_stats_d["total_len"],
@@ -253,24 +410,10 @@ def parse_contigs_stats(path: Path) -> AssemblyStats | None:
         qc_flags=qc["flags"],
         core_genes_found=_stats_d.get("core_genes_found"),
         core_genes_total=_stats_d.get("core_genes_total"),
-        misassemblies=_stats_d.get("misassemblies"),
-        misassembled_contigs=_stats_d.get("misassembled_contigs"),
-        nga50=_stats_d.get("nga50"),
-        duplication_ratio=_stats_d.get("duplication_ratio"),
-        mismatches_per_100kbp=_stats_d.get("mismatches_per_100kbp"),
-        indels_per_100kbp=_stats_d.get("indels_per_100kbp"),
+        avg_contig_len=_stats_d.get("avg_contig_len"),
+        n_per_100kbp=_stats_d.get("n_per_100kbp"),
+        n90=_stats_d.get("n90"),
+        l50=_stats_d.get("l50"),
+        l90=_stats_d.get("l90"),
+        auN=_stats_d.get("auN"),
     )
-
-
-def run_quast(contigs, outdir, reference=None):
-    quast_out = outdir / "quast"
-    quast_out.mkdir(exist_ok=True)
-
-    cmd = [QUAST_PATH, str(contigs), "-o", str(quast_out)]
-    if reference and Path(reference).exists():
-        cmd += ["-r", str(reference)]
-
-    _, out, err = run_cmd(cmd)
-    logs = f"[QUAST]\n{out}\n{err}\n"
-
-    return quast_out, logs

@@ -12,10 +12,19 @@ MLST_GENES = ["abcZ", "adk", "aroE", "fumC", "gdh", "pdhC", "pgm"]
 _PROFILES_CACHE = MLST_PROFILES_CACHE
 
 
-def run_mlst(contigs: Path, minimap2: str = "minimap2") -> dict:
+def run_mlst(contigs: Path) -> dict:
     """
-    Run MLST typing on an assembly.
-    BLASTs the whole assembly directly against local allele FASTAs.
+    7-gene MLST typing (abcZ, adk, aroE, fumC, gdh, pdhC, pgm) against
+    the local PubMLST allele set (pubmlst_typing.query_locus_local),
+    falling back to the mlst CLI tool if no local allele DB is present.
+
+    Args:
+        contigs: path to the assembled genome FASTA.
+
+    Returns:
+        dict with st (sequence type, or "Novel"/"?"), alleles (per-gene
+        allele numbers), method ("local" or "cli"), and incomplete/novel
+        flags.
     """
     if not ALLELE_DIR.exists() or not any(ALLELE_DIR.glob("*.fasta")):
         try:

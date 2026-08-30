@@ -148,8 +148,6 @@ backend/phylogeny/backbone.skf
 data/phylogeny/backbone.skf
 data/phylogeny/*.skf
 
-data/phylogeny/pyngost_db/
-
 .DS_Store
 
 *.bam

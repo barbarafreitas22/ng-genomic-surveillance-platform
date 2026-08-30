@@ -120,12 +120,12 @@ def render() -> None:
     <div class="wf-arrow">&#8594;</div>
     <div class="wf-step">
       <div class="wf-title">QC &amp; Cleaning</div>
-      <div class="wf-sub">FastQC · Kraken2</div>
+      <div class="wf-sub">fastp · Kraken2</div>
     </div>
     <div class="wf-arrow">&#8594;</div>
     <div class="wf-step">
       <div class="wf-title">Assembly</div>
-      <div class="wf-sub">SPAdes · QUAST</div>
+      <div class="wf-sub">SPAdes · Biopython</div>
     </div>
     <div class="wf-arrow">&#8594;</div>
     <div class="wf-step">
@@ -184,16 +184,26 @@ def render() -> None:
                             st.session_state["last_cluster_report"] = _phy_db.get("cluster_report", {})
                             st.session_state["last_matrix_path"]    = _phy_db.get("matrix_path")
                             st.session_state["last_cgmlst_result"]  = _phy_db.get("cgmlst_result")
-                            st.session_state["last_snp_clusters"]   = _phy_db.get("snp_clusters")
                             _cr_db = _phy_db.get("cluster_report", {})
                             st.session_state["last_clusters"] = {
                                 n: i["cluster"] for n, i in _cr_db.items() if "cluster" in i
                             }
                 _n_saved = len(_db_data["samples"])
                 if _n_saved:
-                    st.success(f"Active project: **{selected_project}** · {_n_saved} sample(s) saved")
+                    st.success(f"Active project: **{selected_project}** · {_n_saved} {plural(_n_saved, 'sample')} saved")
                 else:
                     st.success(f"Active project: **{selected_project}**")
+                if st.button("Delete all results", key="del_all_home_btn"):
+                    if db is not None:
+                        db.delete_qc(selected_project)
+                        db.delete_assembly(selected_project)
+                        db.delete_amr(selected_project)
+                        db.delete_phylogeny(selected_project)
+                        db.delete_alerts(selected_project)
+                        db.delete_samples(selected_project)
+                    _clear_project_results()
+                    _load_project_cached.clear()
+                    st.rerun()
             else:
                 st.warning("No projects found. Create one first.")
             active_project = selected_project if project_list else None
@@ -285,7 +295,12 @@ def render() -> None:
 
         if _active_files:
             _fp_groups = group_paired_end(_active_files)
-            st.success(f"{len(_active_files)} file(s) ready, **{len(_fp_groups)} sample(s)** detected.")
+            _n_files_rdy = len(_active_files)
+            _n_fp_groups = len(_fp_groups)
+            st.success(
+                f"{_n_files_rdy} {plural(_n_files_rdy, 'file')} ready, "
+                f"**{_n_fp_groups} {plural(_n_fp_groups, 'sample')}** detected."
+            )
             _fp_id_map: dict = {}
             for _fpi, _fpbase in enumerate(_fp_groups):
                 _fp_lbl = "  +  ".join(
@@ -303,59 +318,6 @@ def render() -> None:
             _inline_metadata_widget(
                 list(_fp_id_map.values()), active_project, "fp"
             )
-
-        _PIPELINE_STAGES = ["QC", "Assembly", "AMR", "Phylogenetics", "Report"]
-        _STAGE_COLORS    = {
-            "ok":      "#00c9b1",
-            "error":   "#ef4444",
-            "pending": "#cbd5e1",
-            "running": "#94a3b8",
-        }
-
-        def _donut_svg(stage_states: list[str]) -> str:
-            r, cx, cy = 38, 50, 50
-            circ = 2 * 3.14159265 * r
-            slot = circ / len(stage_states)
-            gap  = 4.0
-            dash = slot - gap
-            arcs = ""
-            for i, state in enumerate(stage_states):
-                col    = _STAGE_COLORS.get(state, _STAGE_COLORS["pending"])
-                offset = -(i * slot)
-                arcs  += (
-                    f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="none"'
-                    f' stroke="{col}" stroke-width="8"'
-                    f' stroke-dasharray="{dash:.2f} {circ - dash:.2f}"'
-                    f' stroke-dashoffset="{offset:.2f}"'
-                    f' transform="rotate(-90 {cx} {cy})"'
-                    f' stroke-linecap="round"/>'
-                )
-            return f'<svg width="90" height="90" viewBox="0 0 100 100">{arcs}</svg>'
-
-        def _sample_card_html(sid: str, stage_states: list[str],
-                              cat: str = "", n50s: str = "") -> str:
-            cat_color = {"susceptible": "#00c9b1", "MDR": "#ef4444",
-                         "high_resistance": "#f59e0b",
-                         "moderate_resistance": "#f59e0b"}.get(cat, "#64748b")
-            stage_labels = "  ".join(
-                f'<span style="color:{"#00c9b1" if s=="ok" else "#ef4444" if s=="error" else "#94a3b8"}'
-                f';font-size:0.6rem;">'
-                f'{"✓" if s=="ok" else "✗" if s=="error" else "○"} {lbl}</span>'
-                for lbl, s in zip(_PIPELINE_STAGES, stage_states)
-            )
-            return f"""
-<div style="display:inline-flex;flex-direction:column;align-items:center;
-  background:#f8fafc;border:1px solid #e2e8f0;border-radius:14px;
-  padding:1rem 1.2rem 0.85rem;margin:0.4rem;min-width:140px;vertical-align:top;">
-  {_donut_svg(stage_states)}
-  <div style="font-size:0.72rem;font-weight:700;color:#1e293b;margin-top:0.45rem;
-    max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{sid}</div>
-  {f'<div style="font-size:0.65rem;color:{cat_color};font-weight:600;margin-top:0.1rem;">{cat}</div>' if cat else ''}
-  {f'<div style="font-size:0.6rem;color:#475569;margin-top:0.05rem;">N50 {n50s}</div>' if n50s else ''}
-  <div style="margin-top:0.55rem;display:flex;gap:0.35rem;flex-wrap:wrap;justify-content:center;">
-    {stage_labels}
-  </div>
-</div>"""
 
         _fp_job_pending = bool(st.session_state.get("_fp_pending_job"))
 
@@ -441,32 +403,18 @@ def render() -> None:
 
             elif _fp_job["status"] in ("queued", "running"):
                 _fp_live = db.load_project(active_project).get("samples", {})
-                _fp_cards = [
-                    _sample_card_html(_sid, [
-                        "ok" if _fp_live.get(_sid, {}).get("has_qc")       else "pending",
-                        "ok" if _fp_live.get(_sid, {}).get("has_assembly") else "pending",
-                        "ok" if _fp_live.get(_sid, {}).get("has_amr")      else "pending",
-                        "pending",
-                        "pending",
-                    ])
-                    for _sid in _fp_sids
-                ]
-                _fp_n_done = sum(1 for _sid in _fp_sids if _fp_live.get(_sid, {}).get("has_amr"))
+                _fp_started = _fp_job.get("started_at") or _fp_job.get("created_at") or ""
+                def _fp_fresh(_sid, _key):
+                    return (_fp_live.get(_sid, {}).get(_key) or "") >= _fp_started
+                _fp_n_done = sum(1 for _sid in _fp_sids if _fp_fresh(_sid, "amr_ran_at"))
+
                 with st.status(
-                    f"Running Full Pipeline — {active_project} · {_fp_n_total} sample(s)",
+                    f"Running Full Pipeline: {active_project} · {_fp_n_total} {plural(_fp_n_total, 'sample')}",
                     expanded=True,
                 ) as _fp_status:
-                    st.markdown(
-                        f'<div style="font-size:0.75rem;color:#64748b;margin-bottom:0.5rem;">'
-                        f'Up to {max(1, (os.cpu_count() or 2) // 2)} parallel worker(s)</div>'
-                        f'<div style="display:flex;flex-wrap:wrap;gap:0;margin-bottom:0.5rem;">'
-                        + "".join(_fp_cards) + "</div>",
-                        unsafe_allow_html=True,
-                    )
-                    _fp_status.update(
-                        label="Queued — waiting for worker…" if _fp_job["status"] == "queued"
-                        else f"Running… {_fp_n_done}/{_fp_n_total} sample(s) done"
-                    )
+                    _fp_label = "Queued…" if _fp_job["status"] == "queued" else f"{_fp_n_done}/{_fp_n_total} {plural(_fp_n_total, 'sample')}"
+                    st.caption(_fp_label)
+                    _fp_status.update(label=_fp_label)
                 time.sleep(3)
                 st.rerun()
 
@@ -492,7 +440,6 @@ def render() -> None:
                 st.session_state["last_matrix_path"]    = results["phylogeny"].get("matrix_path")
                 st.session_state["last_upload_names"]   = results["phylogeny"].get("upload_names", [])
                 st.session_state["last_cgmlst_result"]  = results["phylogeny"].get("cgmlst_result")
-                st.session_state["last_snp_clusters"]   = results["phylogeny"].get("snp_clusters")
                 if results["phylogeny"].get("error"):
                     st.warning(f"Pipeline completed with phylogeny warning: {results['phylogeny']['error']}")
                 else:
@@ -521,10 +468,10 @@ def render() -> None:
 
     m1, m2, m3, m4 = st.columns(4)
     for col, title, tools in [
-        (m1, "QC & Cleaning",    "FastQC · fastp · MultiQC"),
-        (m2, "QC & Assembly",  "FastQC · fastp · SPAdes · QUAST"),
+        (m1, "QC & Cleaning",    "fastp · Kraken2"),
+        (m2, "QC & Assembly",  "fastp · SPAdes · Biopython"),
         (m3, "AMR Profiling",    "Minimap2 · European 2020"),
-        (m4, "Phylogenetics",    "SKA2 · RapidNJ · MLST · NG-STAR · NG-MAST"),
+        (m4, "Phylogenetics",    "SKA2 · RapidNJ · MLST · NG-STAR"),
     ]:
         col.markdown(f"""
         <div style="
@@ -629,7 +576,13 @@ def render() -> None:
             + list(_fp_results.get("assembly", {}).keys())
             + list(_fp_results.get("amr", {}).keys())
         ))
-        _fp_rows, _fp_contig_paths, _fp_mqc_paths = [], {}, {}
+        _fp_any_reads_qc = any(
+            not _fp_results.get("qc", {}).get(_sid, {}).get("error")
+            and _fp_results.get("qc", {}).get(_sid, {}).get("metrics", {}).get("total_reads")
+            for _sid in _all_sids
+        )
+
+        _fp_rows, _fp_contig_paths = [], {}
         for _sid in _all_sids:
             _qr = _fp_results.get("qc",  {}).get(_sid, {})
             _ar = _fp_results.get("assembly", {}).get(_sid, {})
@@ -643,9 +596,6 @@ def render() -> None:
                 _gc  = _m.get("gc")
                 if _tot: _qc_reads = f"{_tot:,}"
                 if _gc:  _qc_gc    = f"{_gc}%"
-                _mqp = Path(_qr.get("multiqc", "") or "")
-                if _mqp.is_file():
-                    _fp_mqc_paths[_sid] = _mqp
 
             _asm_len = _asm_n50 = _asm_comp = "—"
             if not _ar.get("error") and _ar.get("contigs_path"):
@@ -667,16 +617,18 @@ def render() -> None:
                     c.replace("_", " ").capitalize() for c in _mr.cdc_phenotypes if c != "wildtype"
                 ) or "Wildtype"
 
-            _fp_rows.append({
-                "Sample":          _sid,
-                "QC reads":        _qc_reads,
-                "GC%":             _qc_gc,
+            _fp_row = {"Sample": _sid}
+            if _fp_any_reads_qc:
+                _fp_row["QC reads"] = _qc_reads
+                _fp_row["GC%"]      = _qc_gc
+            _fp_row.update({
                 "Assembly length": _asm_len,
                 "N50":             _asm_n50,
                 "Core genes %":    _asm_comp,
                 "AMR score":       _amr_score,
                 "CDC phenotype":   _amr_pheno,
             })
+            _fp_rows.append(_fp_row)
 
         _df_fp = pd.DataFrame(_fp_rows)
         st.dataframe(_df_fp, use_container_width=True, hide_index=True)
@@ -703,17 +655,6 @@ def render() -> None:
                     key=f"fp_asm_dl_{_sid}",
                 )
 
-        if _fp_mqc_paths:
-            st.markdown("**MultiQC reports:**")
-            _fpmcols = st.columns(min(len(_fp_mqc_paths), 4))
-            for _i, (_sid, _path) in enumerate(_fp_mqc_paths.items()):
-                _fpmcols[_i % 4].download_button(
-                    f"⬇ {_sid} QC",
-                    data=_path.read_bytes(),
-                    file_name=f"{_sid}_multiqc.html",
-                    mime="text/html",
-                    key=f"fp_mqc_dl_{_sid}",
-                )
         if st.button("View full results →", type="primary", key="fp_goto_results"):
             st.session_state["_nav_to"] = "Full Pipeline Results"
             st.rerun()
@@ -734,27 +675,12 @@ def render() -> None:
                     db.save_alerts(active_project, _hp_fresh)
             _hp_all = db.load_alerts(active_project)
 
+            _qc_errors = [a for a in _hp_all if a.get("alert_type") in {"species_contamination", "assembly_qc_fail"}]
             _mdr_xdr   = [a for a in _hp_all if a.get("alert_type") in {"mdr", "xdr"}]
-            _qc_errors = [a for a in _hp_all if a.get("alert_type") not in {"mdr", "xdr"}]
 
             if not _hp_all:
                 st.success("No alerts.")
             else:
-                if _mdr_xdr:
-                    _n_xdr = sum(1 for a in _mdr_xdr if a.get("alert_type") == "xdr")
-                    _n_mdr = len(_mdr_xdr) - _n_xdr
-                    _label = []
-                    if _n_xdr:
-                        _label.append(f"{_n_xdr} XDR")
-                    if _n_mdr:
-                        _label.append(f"{_n_mdr} MDR")
-                    with st.expander(f"🔴 {' · '.join(_label)}", expanded=False):
-                        for _a in _mdr_xdr:
-                            _icon = "☣️" if _a.get("alert_type") == "xdr" else "🔴"
-                            st.markdown(f"{_icon} {_a.get('message', '')}")
-                else:
-                    st.success("No MDR/XDR profiles.")
-
                 if _qc_errors:
                     _n_crit = sum(1 for a in _qc_errors if a.get("severity") == "critical")
                     _n_err  = sum(1 for a in _qc_errors if a.get("severity") == "error")
@@ -768,6 +694,23 @@ def render() -> None:
                             _sev = _a.get("severity", "")
                             _ico = "🔴" if _sev == "critical" else ("🟠" if _sev == "error" else "🟡")
                             st.markdown(f"{_ico} {_a.get('message', '')}")
+                else:
+                    st.success("No contamination or QC failures.")
+
+                if _mdr_xdr:
+                    _n_xdr = sum(1 for a in _mdr_xdr if a.get("alert_type") == "xdr")
+                    _n_mdr = len(_mdr_xdr) - _n_xdr
+                    _label = []
+                    if _n_mdr:
+                        _label.append(f"{_n_mdr} MDR")
+                    if _n_xdr:
+                        _label.append(f"{_n_xdr} XDR")
+                    with st.expander(f"🔴 {' · '.join(_label)}", expanded=False):
+                        for _a in sorted(_mdr_xdr, key=lambda a: a.get("alert_type") == "xdr"):
+                            _icon = "☣️" if _a.get("alert_type") == "xdr" else "🔴"
+                            st.markdown(f"{_icon} {_a.get('message', '')}")
+                else:
+                    st.success("No MDR/XDR profiles.")
 
         except Exception as _hp_ex:
             st.info(f"Alert system unavailable: {_hp_ex}")

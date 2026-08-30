@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-import base64
 import configparser
-import json
 import os
 import re
 import sys
 import tempfile
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional
 
@@ -21,12 +17,12 @@ APP_DIR = Path(__file__).resolve().parent.parent
 PROJECT_ROOT = APP_DIR.parent
 sys.path.append(str(PROJECT_ROOT))
 
-from backend.paths import PROJECTS_DIR, SNP_TRANSMISSION_THRESHOLD, SNP_OUTBREAK_THRESHOLD
+from backend.paths import PROJECTS_DIR, RESULTS_DIR
 from backend.models import AMRResult
 
 CONFIG_PATH = PROJECT_ROOT / "config.ini"
 UPLOAD_DIR = APP_DIR / "uploads"
-RESULTS_BASE = APP_DIR / "results"
+RESULTS_BASE = RESULTS_DIR
 
 
 run_full_pipeline = None
@@ -56,6 +52,9 @@ try:
         PLASMID_CDC_RULES as _PLASMID_CDC_RULES,
         load_synonymous_panel,
         synonymous_panel_meta,
+        _HIGH_IMPACT,
+        _MODERATE_IMPACT,
+        _TRUNCATION_RULES,
     )
 except Exception:
     run_amr_variant_calling = None
@@ -65,6 +64,9 @@ except Exception:
     _PLASMID_CDC_RULES = {}
     load_synonymous_panel = lambda: {}
     synonymous_panel_meta = lambda: {"n_genomes": 0, "genomes": []}
+    _HIGH_IMPACT = frozenset()
+    _MODERATE_IMPACT = frozenset()
+    _TRUNCATION_RULES = {}
 
 try:
     from backend.phylogeny.run_phylogeny import build_distance_tree
@@ -134,6 +136,11 @@ def read_config(config_path: Path) -> configparser.ConfigParser:
     return config
 
 
+def plural(n: int, word: str, plural_form: str | None = None) -> str:
+    """'sample' -> 'sample' if n == 1 else 'samples' (or plural_form if given)."""
+    return word if n == 1 else (plural_form or f"{word}s")
+
+
 def sanitize_name(name: str) -> str:
     clean = re.sub(r"[^A-Za-z0-9._-]+", "_", name.strip())
     clean = re.sub(r"_+", "_", clean).strip("._-")
@@ -179,8 +186,7 @@ def group_paired_end(files) -> dict[str, dict[str, Optional[object]]]:
     samples: dict[str, dict[str, Optional[object]]] = {}
     for f in files:
         ftype = detect_read_type(f.name)
-        # Strip compound extensions before deriving the sample ID.
-        name = f.name.lower()
+        name = re.sub(r"\s*\(\d+\)(?=\.[a-z0-9.]+$)", "", f.name.lower())
         for _ext in (".fastq.gz", ".fq.gz", ".fastq", ".fq", ".fa.gz", ".fasta.gz", ".fa", ".fasta"):
             if name.endswith(_ext):
                 name = name[: -len(_ext)]
@@ -379,20 +385,6 @@ def find_trimmed_reads(project_name: str) -> list[Path]:
     return sorted(candidates, key=lambda p: ("trim" not in p.name.lower(), p.name.lower()))
 
 
-def _get_fastqc_html_paths(qc_result: dict) -> list[Path]:
-    paths: list[Path] = []
-    job_dir = qc_result.get("job_dir")
-    if job_dir:
-        fastqc_dir = Path(job_dir) / "fastqc"
-        paths = sorted(fastqc_dir.glob("*_fastqc.html"))
-    if not paths:
-        multiqc_path = qc_result.get("multiqc")
-        if multiqc_path:
-            fastqc_dir = Path(multiqc_path).parent.parent / "fastqc"
-            paths = sorted(fastqc_dir.glob("*_fastqc.html"))
-    return [p for p in paths if p.exists()]
-
-
 def find_contigs(project_name: str) -> list[Path]:
     asm_root = project_assembly_dir(project_name)
     if not asm_root.exists():
@@ -406,7 +398,7 @@ def find_contigs(project_name: str) -> list[Path]:
 _SITE_OPTIONS = ["", "urethral", "rectal", "pharyngeal", "ocular", "conjunctival", "other"]
 _SEX_OPTIONS  = ["", "male", "female", "unknown"]
 _META_COLS    = ["sample_id", "collection_date", "anatomical_site", "sex", "age",
-                 "country", "city", "region", "health_unit"]
+                 "country", "city", "health_unit"]
 
 
 _MATRIX_COLS: list[tuple] = [
@@ -416,14 +408,11 @@ _MATRIX_COLS: list[tuple] = [
     ("AZM", "mtrR A39T",   "chrom",    "mtrR",           "A39T"),
     ("AZM", "mtrR -57del", "promoter", "mtrR_promoter",  "del35A"),
     ("AZM", "mtrR -56A>C", "promoter", "mtrR_promoter",  "AtoC"),
-    ("AZM", "mtrR mtr120", "promoter", "mtrR_promoter",  "mtr120"),
+    ("AZM", "mtrR g-131a", "promoter", "mtrR_promoter",  "mtr120"),
     ("AZM", "mtrR ins2bp", "promoter", "mtrR_promoter",  "ins2bp"),
     ("AZM", "mtrR trunc",  "truncation","mtrR",           None),
     ("AZM", "mtrD mosaic", "chrom",    "mtrD_mosaic_1",  "present"),
     ("AZM", "macAB prmt",  "promoter", "macAB_promoter", "mut"),
-    ("AZM", "rplD K51E",  "chrom",    "rplD",           "K51E"),
-    ("AZM", "rplD Q66H",  "chrom",    "rplD",           "Q66H"),
-    ("AZM", "rplD Q66K",  "chrom",    "rplD",           "Q66K"),
     ("AZM", "rplD G68D",  "chrom",    "rplD",           "G68D"),
     ("AZM", "rplD G68C",  "chrom",    "rplD",           "G68C"),
     ("AZM", "rplD G70D",  "chrom",    "rplD",           "G70D"),
@@ -474,7 +463,6 @@ _MATRIX_COLS: list[tuple] = [
     ("CIP", "parE G410V",  "chrom",    "parE",           "G410V"),
     ("CIP", "norM prmt",   "promoter", "norM_promoter",  "mut"),
     ("TET", "tet-M",       "plasmid",  "tet-M",          None),
-    ("TET", "tet-O",       "plasmid",  "tet-O",          None),
     ("TET", "rpsJ V57M",   "chrom",    "rpsJ",           "V57M"),
     ("SPE", "16S C1192T",  "chrom",    "16SrRNA",        "C1192T"),
     ("SPE", "rpsE T24P",   "chrom",    "rpsE",           "T24P"),
@@ -540,6 +528,111 @@ def _short_mut(display: str) -> str:
     """'mtrR G45D' → 'G45D', '23S A2059G' → 'A2059G', 'penA mosaic' → 'mosaic'"""
     parts = display.split()
     return parts[-1] if len(parts) > 1 else display
+
+
+_EXPLICIT_RESISTANT_PHENOTYPES: frozenset[str] = frozenset({
+    "penicillin_resistance",
+    "ciprofloxacin_resistant",
+    "tetracycline_resistance",
+    "tetracycline_chromosomal_resistance",
+    "sulfonamide_resistance",
+    "spectinomycin_resistance",
+    "macrolide_resistance",
+    "aminoglycoside_resistance",
+})
+
+
+def _matrix_entry_phenotype(lookup: str, gene_key, mut_key) -> str | None:
+    """The CDC phenotype label a given _MATRIX_COLS entry maps to, if any."""
+    if lookup in ("chrom", "promoter"):
+        return _CDC_RULES.get(f"{gene_key}_{mut_key}")
+    if lookup == "plasmid":
+        return _PLASMID_CDC_RULES.get(gene_key)
+    if lookup == "truncation":
+        return _TRUNCATION_RULES.get(gene_key)
+    if lookup == "mosaic":
+        return None  # identity-based detect_mosaic_pena(), independent of infer_cdc_phenotype()
+    return None
+
+
+def _matrix_entry_determinant(lookup: str, gene_key, mut_key) -> tuple[str, str | None]:
+    """(gene, mutation) for a detected _MATRIX_COLS entry; mutation is None when it must render standalone, not slash-grouped."""
+    if lookup == "plasmid":
+        return (str(gene_key), None)
+    if lookup == "mosaic":
+        return ("penA mosaic", None)
+    if lookup == "truncation":
+        return (f"{gene_key}_disrupted", None)
+    if lookup == "promoter":
+        pw_name = {"del35A": "a-57del", "AtoC": "-56a>c", "mtr120": "g-131a"}.get(str(mut_key), str(mut_key))
+        return (str(gene_key), pw_name)
+    return (str(gene_key), str(mut_key))
+
+
+def _join_determinants(pairs: list[tuple[str, str | None]]) -> str:
+    """Group same-gene point mutations with '/', everything else with '; ' (Pathogenwatch style)."""
+    groups: dict[str, list[str]] = {}
+    order: list[str] = []
+    standalone: list[str] = []
+    for gene, mut in pairs:
+        if mut is None:
+            standalone.append(gene)
+            continue
+        if gene not in groups:
+            groups[gene] = []
+            order.append(gene)
+        groups[gene].append(mut)
+    parts = [f"{gene}_" + "/".join(groups[gene]) for gene in order] + standalone
+    return "; ".join(parts)
+
+
+def agent_resistance_summary(amr_result: AMRResult) -> list[dict]:
+    """Per-agent Agent / Inferred resistance / Known determinants table, Pathogenwatch-style."""
+    groups = [g for g in dict.fromkeys(disp[0] for disp in _MATRIX_COLS)]
+    rows = []
+    for group in groups:
+        entries = [e for e in _MATRIX_COLS if e[0] == group]
+        determinant_pairs: list[tuple[str, str | None]] = []
+        phenos_found: set[str] = set()
+        for _, _display, lookup, gene_key, mut_key in entries:
+            if _mut_present(amr_result, lookup, gene_key, mut_key):
+                determinant_pairs.append(_matrix_entry_determinant(lookup, gene_key, mut_key))
+                p = _matrix_entry_phenotype(lookup, gene_key, mut_key)
+                if p:
+                    phenos_found.add(p)
+
+        if phenos_found & (_HIGH_IMPACT | _EXPLICIT_RESISTANT_PHENOTYPES):
+            call = "Resistant"
+        elif phenos_found & _MODERATE_IMPACT:
+            call = "Intermediate"
+        else:
+            call = "None"
+
+        rows.append({
+            "Agent":                _GROUP_LABELS.get(group, group),
+            "Inferred resistance":  call,
+            "Known determinants":   _join_determinants(determinant_pairs) if determinant_pairs else "-",
+        })
+    return rows
+
+
+def render_agent_resistance_table(amr_result: AMRResult) -> None:
+    """Render the Pathogenwatch-style per-agent summary table for one sample."""
+    rows = agent_resistance_summary(amr_result)
+    df = pd.DataFrame(rows)
+
+    def _cell_style(v):
+        if v == "Resistant":
+            return "background-color:#fef2f2;color:#dc2626;font-weight:700;"
+        if v == "Intermediate":
+            return "background-color:#fffbeb;color:#b45309;font-weight:700;"
+        return "color:#9ca3af;"
+
+    st.dataframe(
+        df.style.applymap(_cell_style, subset=["Inferred resistance"]),
+        use_container_width=True,
+        hide_index=True,
+    )
 
 
 def render_amr_mutation_matrix(results_dict: dict) -> None:
@@ -711,12 +804,11 @@ def _render_essential_gene_markers(results_dict: dict) -> None:
                 "Synonymous":  len(syn_muts),
             })
 
-    with st.expander("Non-AMR markers — essential gene variants (informational)", expanded=False):
+    with st.expander("Other Gene Variants (non-AMR)", expanded=False):
         st.caption(
             "Mutations in genes with no known role in antimicrobial resistance — motility, cell "
             "division, DNA repair, natural transformation, iron acquisition, and stress response. "
-            "These do **not** affect the resistance category, phenotype calls, or the Genomic "
-            "Resistance Score. Shown for genomic context only: a variant here may influence "
+            " It is shown for genomic context only: a variant here can influence "
             "fitness, transformation efficiency, or other processes unrelated to drug resistance."
         )
         if not rows:
@@ -729,6 +821,68 @@ def _render_essential_gene_markers(results_dict: dict) -> None:
             file_name="essential_gene_variants.csv",
             mime="text/csv",
             key=f"essential_genes_csv_{id(results_dict)}",
+        )
+
+
+def _render_cgmlst_clustering(cgmlst_result: dict | None, key_prefix: str = "cg") -> None:
+    if not cgmlst_result:
+        return
+    st.divider()
+    st.subheader("cgMLST Clustering")
+    st.caption(
+        "Core genome clustering, source: [pubmlst.org](https://pubmlst.org/): "
+        "*N. gonorrhoeae* cgMLST v1.0"
+    )
+    st.caption(
+        f"Core genome: {cgmlst_result.get('core_loci_count', '?')} loci (≥95% presence). "
+        "Single-linkage clustering at a fixed threshold, "
+        "enabling longitudinal comparison."
+    )
+
+    _cg_stats = cgmlst_result.get("sample_stats", {})
+
+    if not _cg_stats:
+        return
+
+    st.caption(
+        "**400 allele difference threshold (Ng_cgc_400)**, stable genogroup "
+    )
+    _gg_rows = []
+    for _sid, _st in _cg_stats.items():
+        _gg_rows.append({
+            "Sample":            _sid,
+            "Genogroup/Cluster": _st.get("genogroup"),
+            "% assigned":        f"{_st.get('pct_assigned', 0):.1f}%",
+        })
+    _gg_rows.sort(key=lambda r: (
+        r["Genogroup/Cluster"] if r["Genogroup/Cluster"] is not None else float("inf"),
+        r["Sample"],
+    ))
+    for _row in _gg_rows:
+        _row["Genogroup/Cluster"] = _row["Genogroup/Cluster"] if _row["Genogroup/Cluster"] is not None else "—"
+    st.dataframe(pd.DataFrame(_gg_rows), use_container_width=True, hide_index=True)
+
+    _cg_pairs = cgmlst_result.get("pairwise", [])
+    if _cg_pairs:
+        with st.expander("Pairwise allele differences"):
+            _pair_rows = []
+            for _p in sorted(_cg_pairs, key=lambda x: x["allele_diff"]):
+                _pair_rows.append({
+                    "Sample A":          _p["sample_a"],
+                    "Sample B":          _p["sample_b"],
+                    "Allele differences": _p["allele_diff"],
+                    "Same genogroup (≤400)": "Yes" if _p["same_genogroup"] else "No",
+                })
+            st.dataframe(pd.DataFrame(_pair_rows), use_container_width=True, hide_index=True)
+
+    _cg_matrix_csv = cgmlst_result.get("matrix_csv")
+    if _cg_matrix_csv and Path(_cg_matrix_csv).exists():
+        st.download_button(
+            "⬇ cgMLST distance matrix (CSV)",
+            data=Path(_cg_matrix_csv).read_bytes(),
+            file_name="cgmlst_distances.csv",
+            mime="text/csv",
+            key=f"{key_prefix}_matrix_dl",
         )
 
 
@@ -773,7 +927,7 @@ def _render_cohort_amr_profile(amr_samples: dict, project_name: str = "") -> Non
         elif lookup == "plasmid" and gene_key:
             _col_pheno[display] = _PLASMID_CDC_RULES.get(gene_key, c[0])
         elif lookup == "mosaic":
-            _col_pheno[display] = "penA_allele_likely_mosaic"
+            _col_pheno[display] = "penA mosaic suspected (sequence identity, independent of the mutation-count check)"
         elif lookup == "truncation":
             _col_pheno[display] = "efflux_pump_overexpression"
         else:
@@ -797,7 +951,7 @@ def _render_cohort_amr_profile(amr_samples: dict, project_name: str = "") -> Non
     st.divider()
     st.markdown(f"""
 <div style="margin:1.2rem 0 0.8rem 0;padding-bottom:0.55rem;border-bottom:2px solid #e2e8f0;">
-  <div style="font-size:1.05rem;font-weight:700;color:#0f172a;">Cohort AMR Profile — {n} samples</div>
+  <div style="font-size:1.05rem;font-weight:700;color:#0f172a;">Cohort AMR Profile: {n} samples</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -931,7 +1085,8 @@ def _render_cohort_amr_profile(amr_samples: dict, project_name: str = "") -> Non
             x=sids,
             y=[totals[sid] for sid in sids],
             marker_color=[_bar_color(totals[sid]) for sid in sids],
-            hovertemplate="%{x}: %{y} determinant(s)<extra></extra>",
+            customdata=[plural(totals[sid], "determinant") for sid in sids],
+            hovertemplate="%{x}: %{y} %{customdata}<extra></extra>",
         ))
         fig_b.add_hline(
             y=3, line_dash="dash", line_color="#f97316", line_width=1.5,
@@ -960,45 +1115,247 @@ def _render_cohort_amr_profile(amr_samples: dict, project_name: str = "") -> Non
         st.plotly_chart(fig_b, use_container_width=True, key=f"cohort_burden_{id(amr_samples)}")
 
 
+_RESISTANCE_CATEGORY_ORDER  = ["susceptible", "low_resistance", "moderate_resistance", "high_resistance", "MDR", "XDR"]
+_RESISTANCE_CATEGORY_LABELS = {
+    "susceptible":         "Susceptible",
+    "low_resistance":      "Low resistance",
+    "moderate_resistance": "Moderate resistance",
+    "high_resistance":     "High resistance",
+    "MDR":                 "MDR",
+    "XDR":                 "XDR",
+}
+_RESISTANCE_CATEGORY_COLORS = {
+    "Susceptible":         "#16a34a",
+    "Low resistance":      "#84cc16",
+    "Moderate resistance": "#facc15",
+    "High resistance":     "#f97316",
+    "MDR":                 "#dc2626",
+    "XDR":                 "#7f1d1d",
+    "Unknown":             "#cbd5e1",
+}
+_RESISTANCE_CATEGORY_LABEL_ORDER = [_RESISTANCE_CATEGORY_LABELS[c] for c in _RESISTANCE_CATEGORY_ORDER] + ["Unknown"]
+
+
+def _sample_resistance_categories(project_name: str | None) -> dict[str, str]:
+    """{sample_id: category label}."""
+    if not project_name or db is None:
+        return {}
+
+    out: dict[str, str] = {}
+    for sid, d in _load_project_cached(project_name).get("samples", {}).items():
+        amr = d.get("amr")
+        if amr is None:
+            continue
+        cat = amr.resistance_category or "susceptible"
+        out[sid] = _RESISTANCE_CATEGORY_LABELS.get(cat, cat)
+    return out
+
+
+def _resistant_sample_ids(amr_samples: dict, group_code: str) -> set[str]:
+    idxs = [c for c in _MATRIX_COLS if c[0] == group_code]
+    return {
+        sid for sid, r in amr_samples.items()
+        if isinstance(r, AMRResult) and any(_mut_present(r, c[2], c[3], c[4]) for c in idxs)
+    }
+
+
+def _render_amr_tree_highlight(
+    project_name: str | None, upload_names: list[str], key_prefix: str,
+) -> dict[str, str] | None:
+    """Antibiotic selectbox for tree highlighting. Returns {sample_id: "resistant"/
+    "susceptible"/"no_data"} for uploaded samples under the chosen antibiotic, or None
+    if "None" is selected."""
+    if not upload_names:
+        return None
+
+    amr_samples: dict = {}
+    if project_name and db is not None:
+        amr_samples = {
+            sid: d["amr"]
+            for sid, d in _load_project_cached(project_name).get("samples", {}).items()
+            if "amr" in d
+        }
+
+    groups_present = sorted({c[0] for c in _MATRIX_COLS}, key=lambda g: _GROUP_LABELS.get(g, g))
+    options = ["None"] + [_GROUP_LABELS.get(g, g) for g in groups_present]
+    choice = st.selectbox("Highlight resistance to", options, key=f"{key_prefix}_amr_highlight")
+    if choice == "None":
+        return None
+
+    group_code = next(g for g in groups_present if _GROUP_LABELS.get(g, g) == choice)
+    resistant = _resistant_sample_ids(amr_samples, group_code)
+
+    result: dict[str, str] = {}
+    for sid in upload_names:
+        if sid not in amr_samples:
+            result[sid] = "no_data"
+        elif sid in resistant:
+            result[sid] = "resistant"
+        else:
+            result[sid] = "susceptible"
+
+    if not amr_samples:
+        st.caption("No AMR data available yet for the uploaded samples.")
+    elif "no_data" in result.values():
+        st.caption("Samples without AMR data yet are shown greyed out.")
+    return result
+
+
+def render_metadata_charts(meta: dict, sample_ids: list[str], project_name: str | None = None) -> None:
+    rows = [
+        {"sample_id": sid, **meta[sid]}
+        for sid in sample_ids
+        if meta.get(sid) and any(meta[sid].values())
+    ]
+    if not rows:
+        return
+
+    cat_by_sid = _sample_resistance_categories(project_name)
+    if not any(sid in cat_by_sid for sid in sample_ids):
+        st.caption("Resistance breakdowns will appear here once AMR profiling has been run for these samples.")
+        return
+
+    df = pd.DataFrame(rows)
+    df["Resistance category"] = df["sample_id"].map(cat_by_sid).fillna("Unknown")
+    _cat_scale = alt.Scale(
+        domain=_RESISTANCE_CATEGORY_LABEL_ORDER,
+        range=[_RESISTANCE_CATEGORY_COLORS[c] for c in _RESISTANCE_CATEGORY_LABEL_ORDER],
+    )
+
+    date_col = df.get("collection_date")
+    if date_col is not None and date_col.astype(bool).any():
+        dt = df[df["collection_date"].astype(bool)].copy()
+        dt["collection_date"] = pd.to_datetime(dt["collection_date"], errors="coerce", dayfirst=True)
+        dt = dt.dropna(subset=["collection_date"])
+        if not dt.empty:
+            dt_counts = (
+                dt.groupby([dt["collection_date"].dt.date, "Resistance category"])
+                .size().reset_index(name="Samples")
+            )
+            dt_counts.columns = ["Date", "Resistance category", "Samples"]
+            st.altair_chart(
+                alt.Chart(dt_counts).mark_bar().encode(
+                    x=alt.X("Date:T", title="Collection date"),
+                    y=alt.Y("Samples:Q", title="Samples", axis=alt.Axis(tickMinStep=1)),
+                    color=alt.Color("Resistance category:N", scale=_cat_scale,
+                                     sort=_RESISTANCE_CATEGORY_LABEL_ORDER),
+                    order=alt.Order("Resistance category:N", sort="ascending"),
+                    tooltip=["Date", "Resistance category", "Samples"],
+                ).properties(height=220, title="Samples by collection date, by resistance category"),
+                use_container_width=True,
+            )
+
+    def _pct_resistant_chart(col: str, title: str):
+        s = df.get(col)
+        if s is None or not s.astype(bool).any():
+            return None
+        sub = df[s.astype(bool) & (df["Resistance category"] != "Unknown")]
+        if sub.empty:
+            return None
+        grp = sub.groupby(col).agg(
+            n=("Resistance category", "size"),
+            pct_resistant=("Resistance category", lambda x: round((x != "Susceptible").mean() * 100, 1)),
+        ).reset_index()
+        grp.columns = [title, "n", "% resistant"]
+        return alt.Chart(grp).mark_bar(color="#dc2626").encode(
+            x=alt.X("% resistant:Q", title="% resistant", scale=alt.Scale(domain=[0, 100])),
+            y=alt.Y(f"{title}:N", title=None, sort="-x"),
+            tooltip=[title, "% resistant", alt.Tooltip("n:Q", title="Samples")],
+        ).properties(height=160, title=f"% resistant by {title.lower()}")
+
+    age_pct_chart = None
+    age_s = df.get("age")
+    if age_s is not None:
+        ages_df = df[(df["Resistance category"] != "Unknown")].copy()
+        ages_df["age_num"] = pd.to_numeric(ages_df.get("age"), errors="coerce")
+        ages_df = ages_df.dropna(subset=["age_num"])
+        if not ages_df.empty:
+            ages_df["Age group"] = pd.cut(
+                ages_df["age_num"], bins=[0, 20, 30, 40, 50, 200],
+                labels=["<20", "20-29", "30-39", "40-49", "50+"], right=False,
+            )
+            age_grp = ages_df.groupby("Age group", observed=True).agg(
+                n=("Resistance category", "size"),
+                pct_resistant=("Resistance category", lambda x: round((x != "Susceptible").mean() * 100, 1)),
+            ).reset_index()
+            if not age_grp.empty:
+                age_pct_chart = alt.Chart(age_grp).mark_bar(color="#dc2626").encode(
+                    x=alt.X("Age group:N", title="Age", sort=["<20", "20-29", "30-39", "40-49", "50+"]),
+                    y=alt.Y("pct_resistant:Q", title="% resistant", scale=alt.Scale(domain=[0, 100])),
+                    tooltip=["Age group", alt.Tooltip("pct_resistant:Q", title="% resistant"),
+                             alt.Tooltip("n:Q", title="Samples")],
+                ).properties(height=160, title="% resistant by age")
+
+    dist_charts = [
+        c for c in (
+            _pct_resistant_chart("anatomical_site", "Site"),
+            _pct_resistant_chart("sex", "Sex"),
+            age_pct_chart,
+            _pct_resistant_chart("country", "Country"),
+        ) if c is not None
+    ]
+    if dist_charts:
+        for col, chart in zip(st.columns(len(dist_charts)), dist_charts):
+            with col:
+                st.altair_chart(chart, use_container_width=True)
+
 def _inline_metadata_widget(
     sample_ids: list[str],
     project_name: str | None,
     key_prefix: str,
 ) -> None:
     """
-    Optional inline metadata form shown after file upload in any module.
-    Renders an expander; saving writes directly to the project DB.
-    Does nothing if project_name is not set or db is unavailable.
+    Optional metadata form shown after upload files in any module.
+    Renders an expander.
     """
     if not sample_ids or not project_name or db is None:
         return
 
     existing = db.load_metadata(project_name) if db else {}
 
+    def _parse_date(v):
+        if not v:
+            return None
+        ts = pd.to_datetime(str(v), errors="coerce", dayfirst=True)
+        return ts.date() if pd.notna(ts) else None
+
     with st.expander("Add metadata (optional)", expanded=False):
-        st.caption(
-            "Fill in any fields you know now. You can always edit them later in "
-            "**4. Sample Metadata**."
-        )
+
         blank = {f: "" for f in _META_COLS[1:]}
         rows = []
+
         for sid in sample_ids:
             row = {"sample_id": sid}
-            row.update({**blank, **{k: (v or "") for k, v in existing.get(sid, {}).items()}})
+            row.update({
+                **blank,
+                **{k: (v or "") for k, v in existing.get(sid, {}).items()}
+            })
+            row["collection_date"] = _parse_date(
+                existing.get(sid, {}).get("collection_date")
+            )
             rows.append(row)
 
         edited = st.data_editor(
             pd.DataFrame(rows, columns=_META_COLS),
             column_config={
-                "sample_id":       st.column_config.TextColumn("Sample ID", disabled=True),
-                "collection_date": st.column_config.TextColumn("Collection date", help="YYYY-MM-DD"),
-                "anatomical_site": st.column_config.SelectboxColumn("Anatomical site", options=_SITE_OPTIONS),
-                "sex":             st.column_config.SelectboxColumn("Sex", options=_SEX_OPTIONS),
-                "age":             st.column_config.NumberColumn("Age", min_value=0, max_value=120, step=1),
-                "country":         st.column_config.TextColumn("Country"),
-                "city":            st.column_config.TextColumn("City/Municipality"),
-                "region":          st.column_config.TextColumn("Region"),
-                "health_unit":     st.column_config.TextColumn("Health unit"),
+                "sample_id": st.column_config.TextColumn(
+                    "Sample ID", disabled=True
+                ),
+                "collection_date": st.column_config.DateColumn(
+                    "Collection date", format="YYYY-MM-DD"
+                ),
+                "anatomical_site": st.column_config.SelectboxColumn(
+                    "Anatomical site", options=_SITE_OPTIONS
+                ),
+                "sex": st.column_config.SelectboxColumn(
+                    "Sex", options=_SEX_OPTIONS
+                ),
+                "age": st.column_config.NumberColumn(
+                    "Age", min_value=0, max_value=120, step=1
+                ),
+                "country": st.column_config.TextColumn("Country"),
+                "city": st.column_config.TextColumn("City/Municipality"),
+                "health_unit": st.column_config.TextColumn("Health unit"),
             },
             use_container_width=True,
             hide_index=True,
@@ -1007,26 +1364,58 @@ def _inline_metadata_widget(
         )
 
         if st.button("Save metadata", key=f"{key_prefix}_meta_save"):
-            db.init_project(project_name)
-            db.save_metadata(project_name, edited.to_dict(orient="records"))
-            _load_project_cached.clear()
-            st.success(f"Metadata saved for {len(rows)} sample(s).")
+            _save_df = edited.copy()
 
+            def _serialise_date(v):
+                if v is None or (isinstance(v, float) and pd.isna(v)):
+                    return None
+
+                if isinstance(v, str):
+                    ts = pd.to_datetime(v, errors="coerce", dayfirst=False)
+                    return ts.date().isoformat() if pd.notna(ts) else None
+
+                return v.isoformat() if pd.notna(v) else None
+
+            _save_df["collection_date"] = _save_df["collection_date"].apply(
+                _serialise_date
+            )
+
+            db.init_project(project_name)
+            db.save_metadata(
+                project_name,
+                _save_df.to_dict(orient="records")
+            )
+
+            _load_project_cached.clear()
+
+            st.success(
+                f"Metadata saved for {len(rows)} "
+                f"{plural(len(rows), 'sample')}."
+            )
+
+            existing = db.load_metadata(project_name)
+
+        render_metadata_charts(
+            existing,
+            sample_ids,
+            project_name=project_name
+        )
 
 _PROJECT_RESULT_KEYS: tuple[str, ...] = (
     "full_pipeline_results",
     "amr_manual_results", "amr_manual_bytes", "amr_manual_errors",
     "assembly_results",
-    "qc_manual_results",
+    "qc_manual_results", "fasta_qc_results",
     "last_tree_path", "last_cluster_report", "last_clusters",
-    "last_matrix_path", "last_cgmlst_result", "last_snp_clusters", "last_upload_names",
-    "phy_tree_path", "phy_run_id", "phy_clusters", "phy_cluster_report",
-    "phy_matrix_path", "phy_upload_names", "phy_cgmlst_result", "phy_snp_clusters",
+    "last_matrix_path", "last_cgmlst_result", "last_upload_names",
+    "phy_tree_path", "phy_run_id", "phy_cluster_report",
+    "phy_matrix_path", "phy_upload_names", "phy_cgmlst_result",
     "phy_nj_tree_path", "phy_ml_tree_path",
     "_amr_loaded_project", "_asm_loaded_project", "_qc_loaded_project",
     "_amr_worker_pending_jobs", "_amr_worker_pending_project",
     "_asm_pending_jobs", "_asm_pending_project",
     "_qc_pending_jobs", "_qc_pending_project",
+    "_fqc_pending_jobs", "_fqc_pending_project",
     "man_selected_sid", "pipe_selected_sid",
 )
 
@@ -1044,587 +1433,6 @@ def ensure_result_page_state() -> None:
         st.session_state["full_pipeline_results"] = None
 
 
-@st.cache_data(show_spinner=False)
-def _genome_read_fasta(contigs_path: str) -> list[dict]:
-    """Read assembly FASTA; return list of {name, length, gc_pct, gc_windows} sorted by length desc."""
-    raw: list[tuple[str, str]] = []
-    with open(contigs_path) as fh:
-        name, parts = None, []
-        for line in fh:
-            line = line.rstrip()
-            if line.startswith(">"):
-                if name:
-                    raw.append((name, "".join(parts)))
-                name = line[1:].split()[0]
-                parts = []
-            else:
-                parts.append(line)
-        if name:
-            raw.append((name, "".join(parts)))
-    GW, GS = 1000, 500
-    result = []
-    for cname, seq in sorted(raw, key=lambda x: -len(x[1])):
-        su = seq.upper()
-        L = len(su)
-        gc_total = (su.count("G") + su.count("C")) / L if L else 0.0
-        wins = [
-            round((su[i:i+GW].count("G") + su[i:i+GW].count("C")) / GW, 3)
-            for i in range(0, L - GW + 1, GS)
-        ]
-        result.append({"name": cname, "length": L, "gc_pct": round(gc_total * 100, 2), "gc_windows": wins})
-    return result
-
-
-@st.cache_data(show_spinner=False)
-@st.cache_data(ttl=600)
-def _genome_map_genes(contigs_path: str, gene_db_dir: str) -> dict:
-    """Map each chromosomal AMR gene to the best-matching contig (minimap2 PAF)."""
-    import subprocess
-    from pathlib import Path as _P
-    mappings: dict = {}
-    for gf in sorted(_P(gene_db_dir).glob("*.fasta")):
-        gname = gf.stem
-        if "_mosaic" in gname or "_promoter" in gname:
-            continue
-        try:
-            proc = subprocess.run(
-                ["minimap2", "-c", contigs_path, str(gf)],
-                capture_output=True, text=True, timeout=20,
-            )
-        except Exception:
-            continue
-        if proc.returncode != 0 or not proc.stdout.strip():
-            continue
-        best_mq, best = -1, None
-        for ln in proc.stdout.strip().split("\n"):
-            cols = ln.split("\t")
-            if len(cols) >= 12:
-                mq = int(cols[11])
-                if mq > best_mq:
-                    best_mq = mq
-                    best = {"contig": cols[5], "start": int(cols[7]), "end": int(cols[8]), "strand": cols[4]}
-        if best and best_mq >= 20:
-            mappings[gname] = best
-    return mappings
-
-
-def _genome_viz_html(viz_data: dict) -> str:
-    """
-    Combined circos + genome browser HTML component.
-    Clicking a contig arc or mutation marker in the circos loads that region in the linear browser below.
-    """
-    import json as _json
-    D = _json.dumps(viz_data, separators=(",", ":"))
-
-    head = (
-        '<div id="vr" style="font-family:monospace;padding:8px 0;">'
-        '<div style="display:flex;justify-content:center;align-items:flex-start;gap:18px;flex-wrap:wrap;">'
-        '<svg id="cs" width="440" height="440" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0;"></svg>'
-        '<div id="cp" style="min-width:180px;max-width:240px;font-size:11px;color:#94a3b8;'
-        'border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px;line-height:1.7;'
-        'background:rgba(255,255,255,0.02);align-self:flex-start;margin-top:32px;">'
-        '<em style="color:#4a5568;">Hover contigs or markers<br>Click to open browser below</em>'
-        "</div></div>"
-        '<div id="bw" style="margin-top:14px;border:1px solid rgba(255,255,255,0.08);'
-        'border-radius:10px;padding:10px 12px;background:rgba(255,255,255,0.015);">'
-        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">'
-        '<span id="bh" style="font-size:11px;color:#6b7280;font-style:italic;">'
-        'Click a contig or marker in the circos to view its gene map</span>'
-        '<div style="display:flex;gap:4px;">'
-        '<button id="bz-out" title="Zoom out" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);color:#c8cdd5;border-radius:5px;padding:2px 9px;cursor:pointer;font-size:12px;">−</button>'
-        '<button id="bz-in"  title="Zoom in"  style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);color:#c8cdd5;border-radius:5px;padding:2px 9px;cursor:pointer;font-size:12px;">+</button>'
-        '<button id="bz-fit" title="Fit whole contig" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);color:#c8cdd5;border-radius:5px;padding:2px 7px;cursor:pointer;font-size:10px;">Fit</button>'
-        "</div></div>"
-        '<div id="bs-wrap" style="position:relative;overflow-x:hidden;cursor:grab;">'
-        '<svg id="bs" width="760" height="130" xmlns="http://www.w3.org/2000/svg" style="display:block;"></svg>'
-        "</div>"
-        '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;">'
-        '<span style="font-size:9px;color:#4a5568;">CIRCOS:</span>'
-        '<span style="font-size:9px;color:#ef4444;">━ Chromosomal resistance</span>'
-        '<span style="font-size:9px;color:#a78bfa;">━ Plasmid gene</span>'
-        '<span style="font-size:9px;color:#64748b;">━ Synonymous</span>'
-        '<span style="font-size:9px;color:#fb923c;">━ Indel</span>'
-        '<span style="font-size:9px;color:#4a5568;margin-left:8px;">BROWSER:</span>'
-        '<span style="font-size:9px;color:#60a5fa;">▶ AMR gene (no mutation)</span>'
-        '<span style="font-size:9px;color:#ef4444;">▶ Resistance mutation gene</span>'
-        "</div></div>"
-        '<div id="gtt" style="position:fixed;display:none;background:#1e293b;border:1px solid rgba(255,255,255,0.12);'
-        'border-radius:8px;padding:10px 14px;font-size:11px;color:#c8cdd5;line-height:1.6;'
-        'max-width:280px;z-index:9999;pointer-events:none;box-shadow:0 4px 20px rgba(0,0,0,0.5);">'
-        "</div></div>"
-    )
-
-    script_open = "<script>(function(){\nconst D=" + D + ";\n"
-
-    script_body = r"""const NS='http://www.w3.org/2000/svg';
-const G=document.getElementById('cs'),PNL=document.getElementById('cp');
-const BH=document.getElementById('bh'),BSV=document.getElementById('bs');
-const BSWRAP=document.getElementById('bs-wrap');
-const GTT=document.getElementById('gtt');
-
-// ── Circos constants ────────────────────────────────────────────────────────
-const W=440,H=440,CX=220,CY=220,Ro=182,Rct=22,Rgco=155,Rgch=32;
-const CC=['#4a9edd','#5bc4bf','#7ecba1','#f7b731','#fd9644','#fc5c65','#a55eea','#45aaf2',
-          '#26de81','#fd79a8','#fdcb6e','#00b894','#e17055','#74b9ff','#d63031','#6c5ce7'];
-
-function pt(r,a){return{x:CX+r*Math.cos(a-Math.PI/2),y:CY+r*Math.sin(a-Math.PI/2)};}
-function mk(t,a,par){
-  const e=document.createElementNS(NS,t);
-  for(const[k,v]of Object.entries(a))e.setAttribute(k,String(v));
-  if(par)par.appendChild(e);return e;}
-function ann(r1,r2,a1,a2,fill,op,xtra){
-  const lg=(a2-a1)>Math.PI?1:0;
-  const A=pt(r1,a1),B=pt(r1,a2),C=pt(r2,a1),D2=pt(r2,a2);
-  const d=`M${A.x} ${A.y} A${r1} ${r1} 0 ${lg} 1 ${B.x} ${B.y} L${D2.x} ${D2.y} A${r2} ${r2} 0 ${lg} 0 ${C.x} ${C.y} Z`;
-  return mk('path',{d,fill,opacity:op||1,...(xtra||{})},G);}
-
-// ── Circos layout ───────────────────────────────────────────────────────────
-mk('circle',{cx:CX,cy:CY,r:Ro+24,fill:'rgba(255,255,255,0.018)',stroke:'rgba(255,255,255,0.06)','stroke-width':1},G);
-mk('circle',{cx:CX,cy:CY,r:Rgco,fill:'none',stroke:'rgba(255,255,255,0.05)','stroke-width':0.5},G);
-mk('circle',{cx:CX,cy:CY,r:Rgco-Rgch,fill:'rgba(255,255,255,0.008)',stroke:'rgba(255,255,255,0.04)','stroke-width':0.5},G);
-mk('text',{x:CX,y:CY,'text-anchor':'middle','dominant-baseline':'middle',fill:'#374151','font-size':8,'font-family':'monospace'},G).textContent='GC';
-
-const tot=D.contigs.reduce((s,c)=>s+c.length,0);
-const GAP=0.006,av=1-D.contigs.length*GAP;
-const ca={};let cur=0;
-D.contigs.forEach((c,i)=>{
-  const f=(c.length/tot)*av;
-  ca[c.name]={a1:cur*2*Math.PI,a2:(cur+f)*2*Math.PI,col:CC[i%CC.length],len:c.length,gc:c.gc_pct};
-  cur+=f+GAP;
-});
-
-// GC inner track
-D.contigs.forEach(c=>{
-  const a=ca[c.name];if(!a||!c.gc_windows||!c.gc_windows.length)return;
-  const n=c.gc_windows.length,sp=a.a2-a.a1,GN=0.46,GX=0.60;
-  c.gc_windows.forEach((g,j)=>{
-    const a1=a.a1+(j/n)*sp,a2=a.a1+((j+1)/n)*sp;
-    if(a2-a1<0.0008)return;
-    const nr=Math.max(0,Math.min(1,(g-GN)/(GX-GN)));
-    ann(Rgco-Rgch+nr*Rgch,Rgco-Rgch,a1,a2,nr>0.5?'#00c9b1':'#0077b6',0.55);
-  });
-});
-
-// Contig arcs
-Object.entries(ca).forEach(([name,a])=>{
-  const seg=ann(Ro,Ro-Rct,a.a1,a.a2,a.col,0.82,{style:'cursor:pointer'});
-  seg.addEventListener('mouseenter',()=>{
-    seg.setAttribute('opacity',1);
-    PNL.innerHTML=`<b style="color:${a.col}">${name}</b><br>Length: <b>${(a.len/1e3).toFixed(1)} kb</b><br>GC: <b>${a.gc}%</b><br>Fraction: <b>${(a.len/tot*100).toFixed(1)}%</b><br><br><span style="color:#4a5568;font-size:10px;">Click to open in browser ↓</span>`;
-  });
-  seg.addEventListener('mouseleave',()=>seg.setAttribute('opacity',0.82));
-  seg.addEventListener('click',()=>loadContig(name));
-  if(a.len>tot*0.02){
-    const mid=(a.a1+a.a2)/2,lp=pt(Ro+13,mid);
-    mk('text',{x:lp.x,y:lp.y,'text-anchor':'middle','dominant-baseline':'middle',fill:a.col,'font-size':7,'font-family':'monospace',opacity:0.75},G).textContent=name.length>10?name.slice(0,8)+'…':name;
-  }
-});
-
-// Mutation markers
-D.mutations.forEach(m=>{
-  const a=ca[m.contig];if(!a)return;
-  const ang=a.a1+(Math.min(m.position,a.len-1)/a.len)*(a.a2-a.a1);
-  const syn=m.type==='synonymous',ht=syn?7:15,op=syn?0.42:0.92,sw=syn?1:1.8,dr=syn?1.5:2.5;
-  const P1=pt(Ro+3,ang),P2=pt(Ro+3+ht,ang);
-  const ln=mk('line',{x1:P1.x,y1:P1.y,x2:P2.x,y2:P2.y,stroke:m.color,'stroke-width':sw,opacity:op},G);
-  const dt=mk('circle',{cx:P2.x,cy:P2.y,r:dr,fill:m.color,opacity:op},G);
-  const on=()=>{
-    ln.setAttribute('stroke-width',2.5);dt.setAttribute('r',4.5);dt.setAttribute('opacity',1);ln.setAttribute('opacity',1);
-    PNL.innerHTML=`<div style="color:${m.color};font-weight:bold;margin-bottom:2px;">${m.gene}</div><div>${m.mutation}</div><div style="color:#4a5568;margin-top:4px;">Type: ${m.type}</div><div style="color:#4a5568;">Contig: ${m.contig}</div><div style="color:#4a5568;">~${m.position.toLocaleString()} bp</div><br><span style="color:#4a5568;font-size:10px;">Click to zoom browser ↓</span>`;
-  };
-  const off=()=>{ln.setAttribute('stroke-width',sw);dt.setAttribute('r',dr);dt.setAttribute('opacity',op);ln.setAttribute('opacity',op);};
-  [ln,dt].forEach(e=>{
-    e.style.cursor='pointer';
-    e.addEventListener('mouseenter',on);e.addEventListener('mouseleave',off);
-    e.addEventListener('click',()=>loadContig(m.contig,m.position));
-  });
-});
-
-mk('text',{x:6,y:H-6,'text-anchor':'start',fill:'#374151','font-size':8,'font-family':'monospace'},G)
-  .textContent=`${D.contigs.length} contig${D.contigs.length===1?'':'s'} · ${(tot/1e6).toFixed(2)} Mb · N50: ${(D.n50/1e3).toFixed(0)} kb`;
-
-// ── Browser state ───────────────────────────────────────────────────────────
-let bCtg=null,bStart=0,bEnd=0;
-
-function bsw(){return BSWRAP.clientWidth||760;}
-
-function b2px(bp){return Math.round((bp-bStart)/Math.max(1,bEnd-bStart)*bsw());}
-
-function px2b(px){return Math.round(bStart+px/bsw()*(bEnd-bStart));}
-
-function loadContig(name,centerPos){
-  const ctg=D.contigs.find(c=>c.name===name);if(!ctg)return;
-  bCtg=name;
-  if(centerPos!==undefined){
-    const win=Math.min(ctg.length,50000);
-    bStart=Math.max(0,Math.round(centerPos-win/2));
-    bEnd=Math.min(ctg.length,Math.round(centerPos+win/2));
-  } else {bStart=0;bEnd=ctg.length;}
-  renderBrowser();
-}
-
-function fmtBp(bp){
-  if(bp>=1e6)return(bp/1e6).toFixed(2)+'M';
-  if(bp>=1e3)return(bp/1e3).toFixed(1)+'k';
-  return String(bp);}
-
-function niceTick(range){
-  const raw=range/8;
-  for(const m of[1,2,5,10,20,50,100,200,500,1000,2000,5000,10000,50000,100000,500000,1000000])if(m>=raw)return m;
-  return 1000000;}
-
-function renderBrowser(){
-  if(!bCtg)return;
-  const ctg=D.contigs.find(c=>c.name===bCtg);
-  const ctgLen=ctg?ctg.length:1;
-  const W=bsw();
-  BSV.setAttribute('width',W);
-  BSV.innerHTML='';
-
-  // Header
-  const rangeStr=(bStart===0&&bEnd===ctgLen)?'full contig':`${fmtBp(bStart)}–${fmtBp(bEnd)}`;
-  BH.innerHTML=`<b style="color:#94a3b8;">${bCtg}</b> &nbsp;<span style="color:#4a5568;">${rangeStr} (${fmtBp(bEnd-bStart)})</span>`;
-
-  const range=bEnd-bStart;
-
-  // Track geometry
-  const RY=18,TY=26,TH=42,MY=76,MH=18,SVH=MY+MH+10;
-  BSV.setAttribute('height',SVH);
-
-  // Ruler baseline
-  mk('line',{x1:0,y1:RY,x2:W,y2:RY,stroke:'#1f2937','stroke-width':1},BSV);
-
-  // Ruler ticks
-  const ti=niceTick(range);
-  for(let t=Math.ceil(bStart/ti)*ti;t<=bEnd;t+=ti){
-    const x=b2px(t);if(x<0||x>W)continue;
-    mk('line',{x1:x,y1:RY-5,x2:x,y2:RY,stroke:'#374151','stroke-width':1},BSV);
-    mk('text',{x:x,y:RY-7,'text-anchor':'middle',fill:'#4b5563','font-size':9,'font-family':'monospace'},BSV).textContent=fmtBp(t);
-  }
-
-  // Gene track background
-  mk('rect',{x:0,y:TY,width:W,height:TH,fill:'rgba(255,255,255,0.01)',rx:3},BSV);
-  mk('line',{x1:0,y1:TY+TH/2,x2:W,y2:TY+TH/2,stroke:'#1e293b','stroke-width':1},BSV);
-
-  // Gene arrows
-  const vis=(D.genes||[]).filter(g=>g.contig===bCtg&&g.end>=bStart&&g.start<=bEnd);
-  vis.forEach(gene=>{
-    const x1=Math.max(0,b2px(gene.start));
-    const x2=Math.min(W,b2px(gene.end));
-    if(x2-x1<2)return;
-    const ah=Math.min(TH*0.45,(x2-x1)*0.22,13);
-    const gy=TY+5,gh=TH-10,ymid=gy+gh/2;
-    let pts;
-    if(gene.strand==='+'){
-      const bx=Math.max(x1,x2-ah);
-      pts=`${x1},${gy} ${bx},${gy} ${x2},${ymid} ${bx},${gy+gh} ${x1},${gy+gh}`;
-    } else {
-      const bx=Math.min(x2,x1+ah);
-      pts=`${x2},${gy} ${bx},${gy} ${x1},${ymid} ${bx},${gy+gh} ${x2},${gy+gh}`;
-    }
-    const bc=gene.color||'#60a5fa';
-    const poly=mk('polygon',{points:pts,fill:gene.has_resistance?bc+'bb':'rgba(96,165,250,0.18)',stroke:bc,'stroke-width':gene.has_resistance?1.5:0.7,style:'cursor:pointer'},BSV);
-    if(x2-x1>36)
-      mk('text',{x:(x1+x2)/2,y:ymid+1,'text-anchor':'middle','dominant-baseline':'middle',
-        fill:gene.has_resistance?'#f1f5f9':'#64748b','font-size':9,'font-family':'monospace',
-        style:'pointer-events:none'},BSV).textContent=gene.name;
-
-    poly.addEventListener('mouseenter',evt=>showGTT(evt,gene));
-    poly.addEventListener('mousemove',evt=>{GTT.style.left=(evt.clientX+14)+'px';GTT.style.top=(evt.clientY-10)+'px';});
-    poly.addEventListener('mouseleave',()=>GTT.style.display='none');
-  });
-
-  // Mutation/variant track
-  mk('line',{x1:0,y1:MY,x2:W,y2:MY,stroke:'#1f2937','stroke-width':0.5},BSV);
-  const ctgMuts=(D.mutations||[]).filter(m=>m.contig===bCtg&&m.position>=bStart&&m.position<=bEnd);
-  ctgMuts.forEach(m=>{
-    const x=b2px(m.position);if(x<0||x>W)return;
-    const syn=m.type==='synonymous';
-    mk('line',{x1:x,y1:MY,x2:x,y2:MY+MH,stroke:m.color,'stroke-width':syn?1:1.5,opacity:syn?0.5:0.9},BSV);
-    if(!syn)mk('circle',{cx:x,cy:MY,r:2.5,fill:m.color,opacity:0.9},BSV);
-  });
-}
-
-function showGTT(evt,gene){
-  const muts=gene.mutations&&gene.mutations.length?`<div style="color:#fca5a5;margin-top:3px;">Mutations: ${gene.mutations.join(', ')}</div>`:'';
-  const plsm=gene.plasmid?`<div style="color:#c4b5fd;margin-top:3px;">Plasmid-mediated resistance gene</div>`:'';
-  GTT.innerHTML=`<div style="font-weight:bold;color:${gene.color||'#60a5fa'};margin-bottom:3px;">${gene.name}</div><div style="color:#cbd5e1;">${gene.product}</div><div style="color:#4b5563;margin-top:3px;font-size:10px;">${gene.start.toLocaleString()}–${gene.end.toLocaleString()} bp &nbsp;·&nbsp; ${gene.strand==='+'?'→ forward':'← reverse'}</div>${muts}${plsm}`;
-  GTT.style.left=(evt.clientX+14)+'px';GTT.style.top=(evt.clientY-10)+'px';GTT.style.display='block';}
-
-// ── Browser zoom / pan ──────────────────────────────────────────────────────
-let drag=null;
-
-BSWRAP.addEventListener('wheel',evt=>{
-  evt.preventDefault();if(!bCtg)return;
-  const rect=BSWRAP.getBoundingClientRect();
-  const pct=(evt.clientX-rect.left)/rect.width;
-  const pivot=bStart+pct*(bEnd-bStart);
-  const factor=evt.deltaY>0?1.4:0.714;
-  const ctg=D.contigs.find(c=>c.name===bCtg);
-  const clen=ctg?ctg.length:1e9;
-  const nr=Math.max(500,Math.min(clen,(bEnd-bStart)*factor));
-  bStart=Math.max(0,Math.round(pivot-pct*nr));
-  bEnd=Math.min(clen,Math.round(bStart+nr));
-  renderBrowser();
-},{passive:false});
-
-BSWRAP.addEventListener('mousedown',evt=>{drag={x:evt.clientX,s:bStart,e:bEnd};BSWRAP.style.cursor='grabbing';});
-document.addEventListener('mousemove',evt=>{
-  if(!drag||!bCtg)return;
-  const bpp=(drag.e-drag.s)/Math.max(1,bsw());
-  const shift=Math.round((drag.x-evt.clientX)*bpp);
-  const ctg=D.contigs.find(c=>c.name===bCtg);
-  const clen=ctg?ctg.length:1e9;
-  const range=drag.e-drag.s;
-  bStart=Math.max(0,drag.s+shift);
-  bEnd=Math.min(clen,bStart+range);
-  renderBrowser();
-});
-document.addEventListener('mouseup',()=>{drag=null;BSWRAP.style.cursor='grab';});
-
-document.getElementById('bz-out').addEventListener('click',()=>{
-  if(!bCtg)return;
-  const ctg=D.contigs.find(c=>c.name===bCtg);const clen=ctg?ctg.length:1e9;
-  const mid=(bStart+bEnd)/2,nr=Math.min(clen,(bEnd-bStart)*1.5);
-  bStart=Math.max(0,Math.round(mid-nr/2));bEnd=Math.min(clen,Math.round(bStart+nr));renderBrowser();});
-document.getElementById('bz-in').addEventListener('click',()=>{
-  if(!bCtg)return;
-  const mid=(bStart+bEnd)/2,nr=Math.max(500,(bEnd-bStart)/1.5);
-  bStart=Math.max(0,Math.round(mid-nr/2));bEnd=Math.round(mid+nr/2);renderBrowser();});
-document.getElementById('bz-fit').addEventListener('click',()=>{
-  if(!bCtg)return;const ctg=D.contigs.find(c=>c.name===bCtg);
-  if(ctg){bStart=0;bEnd=ctg.length;renderBrowser();}});
-
-// Hide tooltip on any scroll
-document.addEventListener('scroll',()=>GTT.style.display='none',true);
-})();
-</script>
-"""
-    return head + script_open + script_body
-
-
-def _render_genome_overview(contigs_path: str, amr_result: dict, sample_label: str = "") -> None:
-    import re as _re
-    from pathlib import Path as _P
-
-    if not contigs_path or not _P(contigs_path).exists():
-        return
-
-    st.divider()
-    with st.expander("Genome overview", expanded=False):
-        import plotly.graph_objects as go
-
-        with st.spinner("Parsing assembly…"):
-            ctg_list = _genome_read_fasta(contigs_path)
-
-        if not ctg_list:
-            st.caption("No contigs found.")
-            return
-
-        lengths = [c["length"] for c in ctg_list]
-        gc_pcts = [c["gc_pct"] for c in ctg_list]
-        total   = sum(lengths)
-        mean_gc = sum(gc_pcts) / len(gc_pcts)
-
-        running = n50 = 0
-        for l in lengths:
-            running += l
-            if running >= total / 2:
-                n50 = l
-                break
-
-        _t1, _t2 = st.tabs(["Assembly statistics", "Genome circos"])
-
-        with _t1:
-            _ca, _cb = st.columns(2)
-            max_show = min(len(lengths), 40)
-
-            with _ca:
-                bar_colors = [
-                    f"rgba(0,201,177,{0.9 if l >= n50 else 0.52})" for l in lengths[:max_show]
-                ]
-                fig_len = go.Figure(go.Bar(
-                    x=list(range(1, max_show + 1)),
-                    y=[l / 1000 for l in lengths[:max_show]],
-                    marker_color=bar_colors,
-                    hovertemplate="Contig %{x}<br>%{y:.1f} kb<extra></extra>",
-                ))
-                if n50:
-                    fig_len.add_hline(
-                        y=n50 / 1000, line_dash="dot", line_color="#00c9b1", opacity=0.65,
-                        annotation_text=f"N50 = {n50/1000:.1f} kb",
-                        annotation_font_color="#00c9b1", annotation_font_size=10,
-                    )
-                fig_len.update_layout(
-                    title=dict(text="Contig lengths", font_size=12, x=0),
-                    xaxis_title="Contig rank", yaxis_title="Length (kb)",
-                    height=260, margin=dict(l=40, r=10, t=36, b=36),
-                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                    xaxis=dict(color="#6b7280", gridcolor="rgba(255,255,255,0.05)"),
-                    yaxis=dict(color="#6b7280", gridcolor="rgba(255,255,255,0.05)"),
-                    font=dict(color="#c8cdd5", size=10),
-                )
-                st.plotly_chart(fig_len, use_container_width=True, key=f"_gv_len_{sample_label}")
-
-            with _cb:
-                gc_bar_colors = [
-                    f"rgba(168,139,250,{0.88 if abs(g - mean_gc) < 2 else 0.48})"
-                    for g in gc_pcts[:max_show]
-                ]
-                fig_gc = go.Figure(go.Bar(
-                    x=list(range(1, max_show + 1)),
-                    y=gc_pcts[:max_show],
-                    marker_color=gc_bar_colors,
-                    hovertemplate="Contig %{x}<br>GC: %{y:.1f}%<extra></extra>",
-                ))
-                fig_gc.add_hline(
-                    y=mean_gc, line_dash="dot", line_color="#a78bfa", opacity=0.65,
-                    annotation_text=f"Mean {mean_gc:.1f}%",
-                    annotation_font_color="#a78bfa", annotation_font_size=10,
-                )
-                fig_gc.update_layout(
-                    title=dict(text="GC content per contig", font_size=12, x=0),
-                    xaxis_title="Contig rank", yaxis_title="GC (%)",
-                    height=260, margin=dict(l=40, r=10, t=36, b=36),
-                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                    xaxis=dict(color="#6b7280", gridcolor="rgba(255,255,255,0.05)"),
-                    yaxis=dict(color="#6b7280", gridcolor="rgba(255,255,255,0.05)"),
-                    font=dict(color="#c8cdd5", size=10),
-                )
-                st.plotly_chart(fig_gc, use_container_width=True, key=f"_gv_gc_{sample_label}")
-
-            _m1, _m2, _m3, _m4 = st.columns(4)
-            _m1.metric("Total length", f"{total/1e6:.2f} Mb")
-            _m2.metric("Contigs",      str(len(ctg_list)))
-            _m3.metric("N50",          f"{n50/1e3:.1f} kb")
-            _m4.metric("Mean GC",      f"{mean_gc:.1f}%")
-
-        with _t2:
-            gene_map: dict = {}
-            try:
-                from backend.amr import GENE_DB_CROM
-                with st.spinner("Mapping AMR genes to assembly…"):
-                    gene_map = _genome_map_genes(contigs_path, str(GENE_DB_CROM))
-            except Exception:
-                pass
-
-            _GCOLOR = {
-                "penA": "#ef4444", "ponA": "#f97316",
-                "gyrA": "#eab308", "parC": "#eab308", "gyrB": "#ca8a04", "parE": "#ca8a04",
-                "mtrR": "#8b5cf6", "norM": "#6d28d9", "mtrC": "#7c3aed",
-                "macA": "#5b21b6", "macB": "#4c1d95",
-                "23SrRNA": "#06b6d4", "16SrRNA": "#0891b2",
-                "rpsJ": "#10b981", "folP": "#059669",
-                "rplD": "#84cc16", "rplV": "#65a30d",
-                "rpoB": "#f43f5e", "rpoD": "#e11d48",
-            }
-
-            mutations: list[dict] = []
-
-            for gene, muts in getattr(amr_result, "chromosomal", {}).items():
-                if not muts or gene not in gene_map:
-                    continue
-                gm = gene_map[gene]
-                for mut in muts:
-                    m = _re.search(r"\d+", mut)
-                    if not m:
-                        continue
-                    aa_pos  = int(m.group())
-                    nuc_off = (aa_pos - 1) * 3
-                    pos = gm["start"] + nuc_off if gm["strand"] == "+" else gm["end"] - nuc_off
-                    mtype = "indel" if _re.search(r"ins|del|\*", mut, _re.I) else "chromosomal"
-                    mutations.append({
-                        "type": mtype, "gene": gene, "mutation": mut,
-                        "contig": gm["contig"], "position": max(0, pos),
-                        "color": _GCOLOR.get(gene, "#ef4444"),
-                    })
-
-            for gene, status in getattr(amr_result, "plasmid", {}).items():
-                if status == "present" and gene in gene_map:
-                    gm = gene_map[gene]
-                    mutations.append({
-                        "type": "plasmid", "gene": gene, "mutation": gene,
-                        "contig": gm["contig"],
-                        "position": (gm["start"] + gm["end"]) // 2,
-                        "color": "#a78bfa",
-                    })
-
-            for gene, muts in getattr(amr_result, "synonymous_variants", {}).items():
-                if not muts or gene not in gene_map:
-                    continue
-                gm = gene_map[gene]
-                for mut in muts:
-                    _nuc = mut["nuc"] if isinstance(mut, dict) else mut
-                    m = _re.search(r"\d+", _nuc)
-                    if not m:
-                        continue
-                    nuc_off = int(m.group())
-                    pos = gm["start"] + nuc_off if gm["strand"] == "+" else gm["end"] - nuc_off
-                    mutations.append({
-                        "type": "synonymous", "gene": gene, "mutation": _nuc,
-                        "contig": gm["contig"], "position": max(0, pos),
-                        "color": "#64748b",
-                    })
-
-            _GENE_PRODUCT_VIZ = {
-                "penA": "Penicillin-binding protein 2 (PBP2)",
-                "ponA": "Penicillin-binding protein 1A (PBP1A)",
-                "porB": "Outer membrane porin B",
-                "mtrR": "MtrCDE efflux pump repressor",
-                "mtrC": "MtrCDE efflux pump — MtrC subunit",
-                "norM": "NorM efflux pump (MATE family)",
-                "macA": "MacAB-TolC efflux pump — MacA subunit",
-                "macB": "MacAB-TolC efflux pump — MacB subunit",
-                "gyrA": "DNA gyrase subunit A (fluoroquinolone target)",
-                "gyrB": "DNA gyrase subunit B (fluoroquinolone target)",
-                "parC": "Topoisomerase IV subunit C (fluoroquinolone target)",
-                "parE": "Topoisomerase IV subunit E (fluoroquinolone target)",
-                "23SrRNA": "23S ribosomal RNA (azithromycin target)",
-                "16SrRNA": "16S ribosomal RNA (aminoglycoside target)",
-                "rpsJ": "Ribosomal protein S10 (tetracycline resistance)",
-                "rpsE": "Ribosomal protein S5 (spectinomycin resistance)",
-                "rplD": "Ribosomal protein L4 (macrolide resistance)",
-                "rplV": "Ribosomal protein L22 (macrolide resistance)",
-                "folP": "Dihydropteroate synthase (sulfonamide target)",
-                "rpoB": "RNA polymerase beta subunit (rifampicin target)",
-                "rpoD": "RNA polymerase sigma factor",
-                "pilQ": "Outer membrane secretin PilQ",
-            }
-
-            gene_features: list[dict] = []
-            for gname, gm in gene_map.items():
-                chrom_muts   = list(getattr(amr_result, "chromosomal", {}).get(gname) or [])
-                plasm_status = getattr(amr_result, "plasmid", {}).get(gname)
-                has_res      = bool(chrom_muts) or plasm_status == "present"
-                gene_features.append({
-                    "name":           gname,
-                    "contig":         gm["contig"],
-                    "start":          gm["start"],
-                    "end":            gm["end"],
-                    "strand":         gm["strand"],
-                    "product":        _GENE_PRODUCT_VIZ.get(gname, gname),
-                    "mutations":      chrom_muts,
-                    "plasmid":        plasm_status == "present",
-                    "has_resistance": has_res,
-                    "color":          _GCOLOR.get(gname, "#60a5fa") if has_res else "#60a5fa",
-                })
-
-            viz_ctgs = [
-                {"name": c["name"], "length": c["length"],
-                 "gc_pct": c["gc_pct"], "gc_windows": c["gc_windows"]}
-                for c in ctg_list[:30]
-            ]
-            viz_data = {
-                "contigs":   viz_ctgs,
-                "total":     total,
-                "n50":       n50,
-                "mutations": mutations,
-                "genes":     gene_features,
-            }
-
-            st.html(_genome_viz_html(viz_data))
-
-
 PHENOTYPE_LABELS = {
     "ceftriaxone_reduced_susceptibility": ("Ceftriaxone — Reduced susceptibility",          "🔴"),
     "high_level_azithromycin_resistance": ("Azithromycin — High-level resistance",           "🔴"),
@@ -1637,6 +1445,7 @@ PHENOTYPE_LABELS = {
     "efflux_pump_overexpression":          ("Efflux pump overexpression (mtrR)",                 "🟡"),
     "tetracycline_chromosomal_resistance": ("Tetracycline — Chromosomal resistance (rpsJ V57M)", "🟡"),
     "reduced_penicillin_susceptibility":   ("Penicillin — Reduced susceptibility (ponA L421P)",  "🟡"),
+    "zoliflodacin_reduced_susceptibility": ("Zoliflodacin — Reduced susceptibility (investigational)", "🟡"),
     "wildtype":                            ("No resistance detected — Wildtype",                 "🟢"),
 }
 
@@ -1647,7 +1456,76 @@ _BADGE_PALETTE = {
     "⚪": ("#f9fafb", "#6b7280", "#e5e7eb"),
 }
 
-def render_amr_interpretation(amr_result: AMRResult, sample_label: str = "", contigs_path: str | None = None):
+_TREATMENT_DRUGS: list[tuple[str, str]] = [
+    ("Ceftriaxone", "ceftriaxone"), ("Azithromycin", "azithromycin"),
+    ("Gentamicin", "gentamicin"), ("Ciprofloxacin", "ciprofloxacin"),
+    ("Penicillin", "penicillin"), ("Tetracycline", "tetracycline"),
+    ("Doxycycline", "doxycycline"),
+]
+
+
+def _render_drug_cards(therapy: dict) -> None:
+    avoid_low = [a.lower() for a in therapy.get("avoid", [])]
+    rec_str   = " ".join(therapy.get("recommend", [])).lower()
+    cards = ""
+    for label, key in _TREATMENT_DRUGS:
+        if key in avoid_low:
+            bg, brd, txt, icon, sub = "#fef2f2", "#dc2626", "#991b1b", "✕", "Avoid"
+        elif key in rec_str:
+            bg, brd, txt, icon, sub = "#f0fdf4", "#16a34a", "#15803d", "✓", "Recommended"
+        else:
+            bg, brd, txt, icon, sub = "#f9fafb", "#d1d5db", "#6b7280", "—", "Not indicated"
+        cards += (
+            f'<div style="background:{bg};border:1.5px solid {brd};border-radius:10px;'
+            f'padding:0.7rem 0.8rem;text-align:center;min-width:90px;flex:1;">'
+            f'<div style="font-size:1.1rem;font-weight:700;color:{txt};">{icon}</div>'
+            f'<div style="font-size:0.78rem;font-weight:700;color:{txt};margin:0.15rem 0;">{label}</div>'
+            f'<div style="font-size:0.65rem;color:{txt};opacity:0.8;">{sub}</div>'
+            f'</div>'
+        )
+    st.markdown(
+        f'<div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-bottom:0.8rem;">{cards}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_drug_matrix(samples_therapy: dict[str, dict]) -> None:
+    """One row per sample, one column per drug (recommended/avoid/not indicated), no expanding needed."""
+    rows = []
+    for sid, therapy in samples_therapy.items():
+        therapy   = therapy or {}
+        avoid_low = [a.lower() for a in therapy.get("avoid", [])]
+        rec_str   = " ".join(therapy.get("recommend", [])).lower()
+        row = {"Sample": sid}
+        for label, key in _TREATMENT_DRUGS:
+            if key in avoid_low:
+                row[label] = "✕"
+            elif key in rec_str:
+                row[label] = "✓"
+            else:
+                row[label] = "—"
+        rows.append(row)
+    if not rows:
+        return
+
+    df = pd.DataFrame(rows)
+    drug_cols = [label for label, _ in _TREATMENT_DRUGS]
+
+    def _cell_style(v):
+        if v == "✓":
+            return "background-color:#f0fdf4;color:#16a34a;font-weight:700;"
+        if v == "✕":
+            return "background-color:#fef2f2;color:#dc2626;font-weight:700;"
+        return "color:#9ca3af;"
+
+    st.dataframe(
+        df.style.applymap(_cell_style, subset=drug_cols),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
+def render_amr_interpretation(amr_result: AMRResult, sample_label: str = ""):
     cdc_list  = amr_result.cdc_phenotypes
     prob      = amr_result.failure_probability
     therapy   = amr_result.therapy
@@ -1660,12 +1538,13 @@ def render_amr_interpretation(amr_result: AMRResult, sample_label: str = "", con
     if is_wt:
         sbg, sc = "#f0fdf4", "#16a34a"
         sb = "#bbf7d0"
-        slabel, sicon = "No resistance detected — Wildtype", "✅"
+        slabel, sicon = "No resistance detected: Wildtype", "✅"
     else:
         sbg, sc = _resistance_color(prob)
         sb = sbg
-        slabel = (f"High resistance risk — {n_resist} mechanism(s) detected"
-                  if prob >= 0.4 else f"Resistance detected — {n_resist} mechanism(s)")
+        _mech = plural(n_resist, "mechanism")
+        slabel = (f"High resistance risk: {n_resist} {_mech} detected"
+                  if prob >= 0.4 else f"Resistance detected: {n_resist} {_mech}")
         sicon = "🔴" if prob >= 0.4 else "🟡"
 
     sample_html = (f"<div style='font-size:0.85rem;color:{sc};opacity:0.75;margin-bottom:0.3rem;'>"
@@ -1683,10 +1562,12 @@ def render_amr_interpretation(amr_result: AMRResult, sample_label: str = "", con
     #  MDR/XDR strain alert 
     _who_matches = amr_result.who_matches
     if _who_matches:
+        _n_strains = len(_who_matches)
+        _strain_word = plural(_n_strains, "strain")
         _has_xdr = any(m["mdr_class"] == "XDR" for m in _who_matches)
         _alert_border = "#ef4444" if _has_xdr else "#f59e0b"
         _alert_bg     = "rgba(239,68,68,0.07)" if _has_xdr else "rgba(245,158,11,0.07)"
-        _alert_label  = "XDR — Superbug / Extensively Drug-Resistant" if _has_xdr else "MDR — Multidrug-Resistant"
+        _alert_label  = "XDR: Extensively Drug-Resistant" if _has_xdr else "MDR: Multidrug-Resistant"
         _alert_icon   = "🚨" if _has_xdr else "⚠️"
         _strain_tags  = "".join(
             f'<span style="display:inline-block;background:rgba(239,68,68,0.15);'
@@ -1707,12 +1588,12 @@ def render_amr_interpretation(amr_result: AMRResult, sample_label: str = "", con
 <div style="border:1.5px solid {_alert_border};background:{_alert_bg};border-radius:12px;
 padding:1rem 1.4rem;margin-bottom:1rem;">
 <div style="font-size:1rem;font-weight:700;color:{_alert_border};margin-bottom:0.4rem;">
-{_alert_icon} Resistance profile consistent with WHO reference strain(s): {_alert_label}
+{_alert_icon} Resistance profile consistent with WHO reference {_strain_word}: {_alert_label}
 </div>
 <div style="margin-bottom:0.5rem;">{_strain_tags}</div>
 <div style="font-size:0.8rem;color:#94a3b8;line-height:1.6;">
 Resistance classes matched: <strong style="color:#e2e8f0;">{", ".join(_class_list)}</strong><br>
-This isolate meets the phenotypic criteria of the indicated WHO reference strain(s) from the
+This isolate meets the phenotypic criteria of the indicated WHO reference {_strain_word} from the
 2012/2016 panels (Unemo et al. 2016, <em>J Antimicrob Chemother</em>).
 Immediate clinical review is recommended.
 </div>
@@ -1736,6 +1617,9 @@ Immediate clinical review is recommended.
             <span>High</span><span>Very high</span><span>Extreme</span>
         </div>
     </div>""", unsafe_allow_html=True)
+
+    st.markdown("##### Resistance by agent")
+    render_agent_resistance_table(amr_result)
 
     #  Mutations + plasmid
     col_chrom, col_plasm = st.columns([3, 2], gap="medium")
@@ -1822,11 +1706,11 @@ Immediate clinical review is recommended.
         if prob >= 0.4:
             _rb_brd, _rb_accent = "#f59e0b", "#f59e0b"
             _rb_bg  = "linear-gradient(135deg,rgba(245,158,11,0.12),rgba(245,158,11,0.04))"
-            _rb_lbl = "Treatment with caution — resistance detected"
+            _rb_lbl = "Treatment with caution, resistance detected"
         else:
             _rb_brd, _rb_accent = "#00c9b1", "#00c9b1"
             _rb_bg  = "linear-gradient(135deg,rgba(0,201,177,0.12),rgba(0,201,177,0.04))"
-            _rb_lbl = "Recommended Treatment — European 2020 (IUSTI)"
+            _rb_lbl = "Recommended Treatment, European 2020 (IUSTI)"
         _avoid_html = (
             f'<div style="margin-top:0.6rem;font-size:0.82rem;color:#ef4444;">'
             f'<strong>Avoid:</strong> {_avoid_display}</div>'
@@ -1847,6 +1731,8 @@ Genomic resistance score: {prob*100:.1f}%
   {_avoid_html}
 </div>""", unsafe_allow_html=True)
 
+        _render_drug_cards(therapy)
+
     _alternatives = therapy.get("alternatives", [])
     if _alternatives:
         _alt_rows = "".join(
@@ -1863,37 +1749,6 @@ Genomic resistance score: {prob*100:.1f}%
        letter-spacing:0.1em;color:#475569;margin-bottom:0.4rem;">Alternative Regimens</div>
   {_alt_rows}
 </div>""", unsafe_allow_html=True)
-
-    # Drug cards — secondary detail
-    _DRUGS = [
-        ("Ceftriaxone",   "ceftriaxone"),
-        ("Azithromycin",  "azithromycin"),
-        ("Gentamicin",    "gentamicin"),
-        ("Ciprofloxacin", "ciprofloxacin"),
-        ("Penicillin",    "penicillin"),
-        ("Tetracycline",  "tetracycline"),
-        ("Doxycycline",   "doxycycline"),
-    ]
-    _drug_cards = ""
-    for _label, _key in _DRUGS:
-        if _key in _avoid_low:
-            _bg, _brd, _txt, _icon, _sub = "#fef2f2", "#dc2626", "#991b1b", "✕", "Avoid"
-        elif _key in _rec_str:
-            _bg, _brd, _txt, _icon, _sub = "#f0fdf4", "#16a34a", "#15803d", "✓", "Recommended"
-        else:
-            _bg, _brd, _txt, _icon, _sub = "#f9fafb", "#d1d5db", "#6b7280", "—", "Not indicated"
-        _drug_cards += (
-            f'<div style="background:{_bg};border:1.5px solid {_brd};border-radius:10px;'
-            f'padding:0.7rem 0.8rem;text-align:center;min-width:90px;flex:1;">'
-            f'<div style="font-size:1.1rem;font-weight:700;color:{_txt};">{_icon}</div>'
-            f'<div style="font-size:0.78rem;font-weight:700;color:{_txt};margin:0.15rem 0;">{_label}</div>'
-            f'<div style="font-size:0.65rem;color:{_txt};opacity:0.8;">{_sub}</div>'
-            f'</div>'
-        )
-    st.markdown(
-        f'<div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-bottom:0.8rem;">{_drug_cards}</div>',
-        unsafe_allow_html=True,
-    )
 
     st.divider()
 
@@ -1964,7 +1819,7 @@ Genomic resistance score: {prob*100:.1f}%
                         background:{_ml_bg};border:1.5px solid {_ml_brd};border-radius:10px;">
                 <div style="font-size:1.6rem;font-weight:700;color:{_st_color};">{_st_label}</div>
                 <div style="font-size:0.75rem;color:#6b7280;">Neisseria MLST</div>
-                {"<div style='font-size:0.72rem;color:#b45309;'>Novel allele(s)</div>" if _novel else ""}
+                {f"<div style='font-size:0.72rem;color:#b45309;'>Novel {plural(sum(1 for v in _alleles.values() if v == 'new'), 'allele')}</div>" if _novel else ""}
                 {"<div style='font-size:0.72rem;color:#dc2626;'>Incomplete profile</div>" if _inc and not _novel else ""}
             </div>""", unsafe_allow_html=True)
             if _alleles:
@@ -2016,7 +1871,7 @@ Genomic resistance score: {prob*100:.1f}%
                 <div style="font-size:1.6rem;font-weight:700;color:{_ng_color};">{_ng_label}</div>
                 <div style="font-size:0.75rem;color:#6b7280;margin-top:2px;">NG-STAR · PubMLST</div>
                 {_st_link}
-                {"<div style='font-size:0.72rem;color:#b45309;margin-top:3px;'>Novel allele(s) — ST undetermined</div>" if _ng_novel else ""}
+                {f"<div style='font-size:0.72rem;color:#b45309;margin-top:3px;'>Novel {plural(sum(1 for v in _ng_alleles.values() if v == 'new'), 'allele')}: ST undetermined</div>" if _ng_novel else ""}
                 {"<div style='font-size:0.72rem;color:#dc2626;margin-top:3px;'>Incomplete profile</div>" if _ng_inc and not _ng_novel else ""}
             </div>""", unsafe_allow_html=True)
             if _ng_alleles:
@@ -2036,7 +1891,60 @@ Genomic resistance score: {prob*100:.1f}%
                     _df_ngs = _df_ngs.drop(columns=["Note"])
                 _ngs2.dataframe(_df_ngs, use_container_width=True, hide_index=True)
 
-    #  Mosaic penA Detection 
+    #  NG-MAST
+    ngmast_res = amr_result.ngmast
+    if ngmast_res:
+        st.divider()
+        _NGMAST_BASE = "https://pubmlst.org/bigsdb?db=pubmlst_neisseria_seqdef&page=schemeInfo&scheme_id=71"
+        _NGMAST_PROFILE = "https://pubmlst.org/bigsdb?db=pubmlst_neisseria_seqdef&page=profileInfo&scheme_id=71&profile_id={st}"
+        st.markdown(
+            "##### NG-MAST — Multi-Antigen Sequence Type &nbsp;"
+        )
+        if ngmast_res.get("error"):
+            st.caption(f"NG-MAST unavailable: {ngmast_res['error']}")
+        else:
+            _nm_st      = ngmast_res.get("ST") or "?"
+            _nm_alleles = ngmast_res.get("alleles", {})
+            _nm_novel   = ngmast_res.get("novel", False)
+            _nm_inc     = ngmast_res.get("incomplete", False)
+            _nm_known   = _nm_st not in ("?", "new", None) and not _nm_novel and not _nm_inc
+            if _nm_known:
+                _nm_bg, _nm_brd, _nm_color = "#eff6ff", "#bfdbfe", "#1d4ed8"
+                _nm_label = f"ST-{_nm_st}"
+                _nm_url   = _NGMAST_PROFILE.format(st=_nm_st)
+                _nm_link  = f'<a href="{_nm_url}" target="_blank" rel="noopener" style="font-size:0.72rem;color:#1d4ed8;text-decoration:underline;">Ver no PubMLST ↗</a>'
+            elif _nm_novel:
+                _nm_bg, _nm_brd, _nm_color = "#fffbeb", "#fde68a", "#b45309"
+                _nm_label = "?"
+                _nm_link  = ""
+            else:
+                _nm_bg, _nm_brd, _nm_color = "#fef2f2", "#fecaca", "#dc2626"
+                _nm_label = "?"
+                _nm_link  = ""
+            _nm1, _nm2 = st.columns([1, 3])
+            _nm1.markdown(f"""
+            <div style="text-align:center;padding:0.6rem 0.5rem;
+                        background:{_nm_bg};border:1.5px solid {_nm_brd};border-radius:10px;">
+                <div style="font-size:1.6rem;font-weight:700;color:{_nm_color};">{_nm_label}</div>
+                <div style="font-size:0.75rem;color:#6b7280;margin-top:2px;">NG-MAST · PubMLST</div>
+                {_nm_link}
+                {f"<div style='font-size:0.72rem;color:#b45309;margin-top:3px;'>Novel {plural(sum(1 for v in _nm_alleles.values() if v == 'new'), 'allele')}: ST undetermined</div>" if _nm_novel else ""}
+                {"<div style='font-size:0.72rem;color:#dc2626;margin-top:3px;'>Incomplete profile</div>" if _nm_inc and not _nm_novel else ""}
+            </div>""", unsafe_allow_html=True)
+            if _nm_alleles:
+                _nm_gene_labels = {"porB": "porB", "tbpB": "tbpB"}
+                _nm_rows = []
+                for g, a in _nm_alleles.items():
+                    _lbl = _nm_gene_labels.get(g, g)
+                    _flag = " ⚠ novel" if a == "new" else (
+                            " ✗ not found" if a in ("not_found", "no_ref") else "")
+                    _nm_rows.append({"Gene": _lbl, "Allele": a, "Note": _flag.strip()})
+                _df_nm = pd.DataFrame(_nm_rows)
+                if not _df_nm["Note"].any():
+                    _df_nm = _df_nm.drop(columns=["Note"])
+                _nm2.dataframe(_df_nm, use_container_width=True, hide_index=True)
+
+    #  Mosaic penA Detection
     mosaic_res = amr_result.mosaic_pena
     if mosaic_res and "identity" in mosaic_res and mosaic_res["identity"] is not None:
         st.divider()
@@ -2182,7 +2090,7 @@ Genomic resistance score: {prob*100:.1f}%
                 _fv = _panel_freq.get(r["Gene"], {}).get(r["_nuc"])
                 r["Panel freq (%)"] = f"{_fv * 100:.1f}" if _fv is not None else "—"
             col_order = ["Gene", "Product", "Notation", "Panel freq (%)"]
-            st.caption(f"Panel frequency from {_n_panel} reference genome(s). Variants absent from the panel are shown as —.")
+            st.caption(f"Panel frequency from {_n_panel} reference {plural(_n_panel, 'genome')}. Variants absent from the panel are shown as —.")
         else:
             col_order = ["Gene", "Product", "Notation"]
             st.caption(
@@ -2196,13 +2104,11 @@ Genomic resistance score: {prob*100:.1f}%
                 use_container_width=True,
                 hide_index=True,
             )
-            st.caption(f"{len(filtered)} synonymous variant(s) shown · {len(syn_rows)} total detected")
+            st.caption(f"{len(filtered)} synonymous {plural(len(filtered), 'variant')} shown · {len(syn_rows)} total detected")
         else:
             st.info("No variants match the current filter.")
     else:
         st.caption("No synonymous variants detected in the screened genes for this sample.")
-
-    _render_genome_overview(contigs_path or "", amr_result, sample_label)
 
 #  Overview panel: metrics + score chart
 

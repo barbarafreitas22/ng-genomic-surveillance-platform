@@ -1,19 +1,13 @@
 from __future__ import annotations
 import json
-import os
-import re
-import tempfile
-import base64
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
 from pathlib import Path
-from typing import Optional
 
-import altair as alt
 import pandas as pd
 import streamlit as st
 
 from views.shared import *
-from views.shared import _inline_metadata_widget
+from views.shared import _inline_metadata_widget, _render_cgmlst_clustering, _render_amr_tree_highlight
 
 
 def render() -> None:
@@ -27,76 +21,81 @@ def render() -> None:
 </div>
 """)
 
+    _phy_active_proj = st.session_state.get("active_project")
+    if _phy_active_proj and db:
+        if st.button(" Delete all results", key="del_phy_btn"):
+            from backend.db import delete_phylogeny as _delete_phylogeny
+            _delete_phylogeny(_phy_active_proj)
+            for _k in ("phy_run_id", "phy_tree_path", "phy_tree_method",
+                       "phy_cluster_report", "phy_matrix_path", "phy_upload_names",
+                       "phy_cgmlst_result",
+                       "last_tree_path", "last_clusters", "last_cluster_report",
+                       "last_matrix_path", "last_upload_names", "last_cgmlst_result"):
+                st.session_state.pop(_k, None)
+            _load_project_cached.clear()
+            st.rerun()
+
     from backend.phylogeny.viewer import load_tree_newick, newick_to_tree_json
+
+    from backend.phylogeny.cgmlst import is_schema_ready, download_schema
+    from backend.phylogeny.run_pyngost import is_pyngost_ready, download_pyngost_db
+    _schema_ready  = is_schema_ready()
+    _pyngost_ready = is_pyngost_ready()
+    if not _schema_ready or not _pyngost_ready:
+        with st.expander("Reference databases missing", expanded=True):
+            if not _schema_ready:
+                st.warning(
+                    "cgMLST schema not found "
+                )
+                if st.button("Download cgMLST schema", key="dl_cgmlst_schema"):
+                    with st.status("Downloading cgMLST schema from PubMLST…", expanded=True) as _s:
+                        try:
+                            download_schema()
+                            _s.update(label="cgMLST schema ready.", state="complete")
+                            st.rerun()
+                        except Exception as e:
+                            _s.update(label="Download failed", state="error")
+                            st.error(str(e))
+            if not _pyngost_ready:
+                st.warning(
+                    "pyngoST allele database not found."
+                )
+                if st.button("Download pyngoST database", key="dl_pyngost_db"):
+                    with st.status("Downloading MLST/NG-STAR databases…", expanded=True) as _s:
+                        try:
+                            download_pyngost_db()
+                            _s.update(label="pyngoST database ready.", state="complete")
+                            st.rerun()
+                        except Exception as e:
+                            _s.update(label="Download failed", state="error")
+                            st.error(str(e))
 
 
     st.markdown("""
-    This module builds whole-genome phylogenetic trees for *Neisseria gonorrhoeae* isolates,
-    placing them in context with a curated backbone panel of international reference genomes
-    and Portuguese clinical isolates.
+    This module builds WGS phylogenetic trees for *Neisseria gonorrhoeae* isolates,
+    placed in context with a curated backbone panel of international reference genomes and
+    Portuguese clinical isolates. Accepts assembled genomes (FASTA). Raw FASTQ reads
+    can be uploaded in Module 1 (Quality Control & Assembly) or via the Full Pipeline in HomePage.
 
-    **Fast NJ (Neighbour-Joining)**, uses assembled genomes (FASTA) or raw paired-end FASTQ
-    reads. FASTA genomes go straight to sketching; FASTQ reads are optionally trimmed with
-    fastp and then sketched directly with SKA2, no assembly step. Faster, uses reads directly,
-    for guaranteed accuracy with full QC and assembly, use the Full Pipeline instead. Computes
-    pairwise SNP distances with SKA2 and builds a Neighbour-Joining tree with RapidNJ.
-    Single-linkage clustering on the SNP distance matrix is applied at three thresholds:
-    **≤20 SNPs** (transmission pair), **≤200 SNPs** (outbreak), and **≤2000 SNPs** (stable
-    genogroup).
-
-    Sequence typing (MLST · NG-STAR · NG-MAST) and allele-based **cgMLST clustering**
-    (chewBBACA) run automatically for assembled-genome samples, applying two epidemiologically
-    calibrated thresholds: **7 AD** (outbreak / transmission pair) and **400 AD** (stable
-    genogroup). These require an assembly, so samples uploaded as raw reads are shown without
-    typing/cgMLST data. chewBBACA and the *N. gonorrhoeae* cgMLST schema are installed and
-    downloaded automatically during the Docker image build, no setup is required on the host
-    machine.
+    1. **SKA2** — computes pairwise SNP (allelic) distances between all genomes
+    2. **RapidNJ** — builds the Neighbour-Joining tree from the distance matrix
+    3. **cgMLST clustering** (chewBBACA) — genogroup clusters assigned at a fixed threshold
+       of ≤400 allele differences (AD)
     """)
 
-    st.caption(
-        "Upload assembled genomes (FASTA) and/or paired-end FASTQ reads, in any combination. "
-        "SKA2 computes pairwise SNP distances between all genomes in seconds; RapidNJ builds "
-        "the Neighbour-Joining tree. Genogroup clusters are assigned by nearest-neighbour SNP "
-        "distance against the backbone panel."
-    )
     uploaded_genomes = st.file_uploader(
-        "Upload assembled genomes (.fa / .fasta / .fna)",
+        "Upload assembled genomes (FASTA).",
         accept_multiple_files=True,
-        type=["fa", "fasta", "fna"],
-        key="phy_fasta_upload",
-    )
-    uploaded_reads = st.file_uploader(
-        "Upload paired-end FASTQ reads (.fastq / .fq / .fastq.gz / .fq.gz)",
-        accept_multiple_files=True,
-        type=["fastq", "fq", "gz"],
-        key="phy_fastq_upload",
-    )
+        type=["fasta", "fa", "fna"],
+        key="phy_upload_fasta",
+    ) or []
 
-    _phy_read_pairs: dict = {}
-    _phy_trim_reads = True
-    if uploaded_reads:
-        _phy_read_pairs = group_paired_end(uploaded_reads)
-        _phy_pe_only = {sid: g for sid, g in _phy_read_pairs.items() if g.get("R1") and g.get("R2")}
-        _n_unpaired = len(_phy_read_pairs) - len(_phy_pe_only)
-        if _n_unpaired:
-            st.warning(f"{_n_unpaired} sample(s) could not be paired (R1/R2 not detected) — excluded.")
-        _phy_read_pairs = _phy_pe_only
-        st.caption(f"{len(uploaded_reads)} file(s) → {len(_phy_read_pairs)} paired-end sample(s) detected.")
-        _phy_trim_reads = st.checkbox(
-            "Trim reads with fastp before sketching (recommended)",
-            value=True,
-            key="phy_trim_reads",
-            help="Removes adapters and low-quality bases before SKA2 sketching. Untrimmed "
-                 "adapter sequence can introduce false k-mers into the distance matrix. "
-                 "Uncheck to sketch raw reads directly (faster, less safe).",
-        )
-
-    _phy_all_sids = [Path(f.name).stem for f in uploaded_genomes] + list(_phy_read_pairs.keys())
+    _phy_all_sids = [Path(f.name).stem for f in uploaded_genomes]
     if _phy_all_sids:
         _phy_proj = st.session_state.get("active_project")
         _inline_metadata_widget(_phy_all_sids, _phy_proj, "phy")
 
-    _phy_has_input = bool(uploaded_genomes) or bool(_phy_read_pairs)
+    _phy_has_input = bool(uploaded_genomes)
     _phy_busy = bool(st.session_state.get("_phy_pending_job"))
     if _phy_has_input and st.button("Run Fast NJ", disabled=_phy_busy):
         from backend.paths import RUNS_DIR as _RUNS_DIR
@@ -105,25 +104,25 @@ def render() -> None:
         _stage.mkdir(parents=True, exist_ok=True)
 
         _samples_payload = []
+        _amr_targets: list[tuple[str, str]] = []
         for _f in uploaded_genomes:
             _dest = _stage / _f.name
             _dest.write_bytes(_f.read())
             _samples_payload.append({"kind": "fasta", "path": str(_dest)})
-
-        for _sid, _pair in _phy_read_pairs.items():
-            _r1p = _stage / _pair["R1"].name
-            _r2p = _stage / _pair["R2"].name
-            _r1p.write_bytes(_pair["R1"].getbuffer())
-            _r2p.write_bytes(_pair["R2"].getbuffer())
-            _samples_payload.append({
-                "kind": "fastq", "name": sanitize_name(_sid),
-                "r1": str(_r1p), "r2": str(_r2p), "trim": _phy_trim_reads,
-            })
+            _amr_targets.append((Path(_f.name).stem, str(_dest)))
 
         _jid = db.submit_job(
             "_phylogeny", "_phy_nj", "phylogeny_nj", {"samples": _samples_payload}
         )
         st.session_state["_phy_pending_job"] = _jid
+
+        _phy_amr_proj = st.session_state.get("active_project")
+        if _phy_amr_proj and db:
+            st.session_state["_phy_amr_pending_jobs"] = [
+                db.submit_job(_phy_amr_proj, sid, "amr", {"contigs": cpath})
+                for sid, cpath in _amr_targets
+            ]
+            st.session_state["_phy_amr_pending_project"] = _phy_amr_proj
         st.rerun()
 
     @st.fragment(run_every="2s")
@@ -138,34 +137,61 @@ def render() -> None:
         _phy_jstatus = _phy_job["status"]
         if _phy_jstatus in ("queued", "running"):
             if _phy_jstatus == "queued":
-                st.info("Queued, waiting for worker…")
+                st.info("Queued…")
             else:
+                if not st.session_state.get("_phy_running_since"):
+                    st.session_state["_phy_running_since"] = time.time()
+                _phy_elapsed = time.time() - st.session_state["_phy_running_since"]
+                if _phy_elapsed < 15:
+                    _phy_stage_msg = "Building distance matrix (SKA2)"
+                elif _phy_elapsed < 30:
+                    _phy_stage_msg = "Building the tree (RapidNJ) and assigning clusters"
+                else:
+                    _phy_stage_msg = "Running cgMLST clustering"
                 with st.status("Running phylogenetic analysis…", state="running", expanded=True):
-                    st.write("Building the SKA2 tree and computing cgMLST allele-based clustering.")
+                    st.write(_phy_stage_msg)
                     st.write(
-                        "The cgMLST step (chewBBACA allele calling) is the slowest part and can take "
-                        "several minutes for larger batches — this page updates automatically, no need "
-                        "to resubmit."
+                        "cgMLST step is slow and can take several minutes, but this page updates "
+                        "automatically, no need to resubmit."
                     )
         elif _phy_jstatus == "done" and _phy_job.get("result"):
             _phy_res  = json.loads(_phy_job["result"])
             st.session_state["phy_run_id"]         = _phy_res["run_id"]
             st.session_state["phy_tree_path"]      = _phy_res["tree_path"]
             st.session_state["phy_tree_method"]    = "Fast NJ"
-            st.session_state["phy_clusters"]       = _phy_res.get("clusters", {})
             st.session_state["phy_cluster_report"] = _phy_res.get("cluster_report", {})
             st.session_state["phy_matrix_path"]    = _phy_res.get("matrix_path")
             st.session_state["phy_upload_names"]   = _phy_res.get("upload_names", [])
             st.session_state["phy_cgmlst_result"]  = _phy_res.get("cgmlst_result")
-            st.session_state["phy_snp_clusters"]   = _phy_res.get("snp_clusters")
             st.session_state.pop("_phy_pending_job", None)
+            st.session_state.pop("_phy_running_since", None)
             st.rerun()
         elif _phy_jstatus == "error":
             st.error(f"Phylogeny error: {_phy_job.get('error_msg', 'Unknown error')}")
             st.session_state.pop("_phy_pending_job", None)
+            st.session_state.pop("_phy_running_since", None)
 
     if st.session_state.get("_phy_pending_job") and db:
         _phy_poll_status()
+
+    @st.fragment(run_every="2s")
+    def _phy_amr_poll_status():
+        _amr_ids = st.session_state.get("_phy_amr_pending_jobs", [])
+        if not (_amr_ids and db):
+            return
+        _amr_proj = st.session_state.get("_phy_amr_pending_project", "")
+        _all_amr_jobs = {j["id"]: j for j in db.get_project_jobs(_amr_proj)}
+        _rel_amr = [_all_amr_jobs[jid] for jid in _amr_ids if jid in _all_amr_jobs]
+        _n_done = sum(1 for j in _rel_amr if j["status"] in ("done", "error"))
+        if _n_done < len(_rel_amr):
+            st.caption(f"Computing AMR for resistance highlighting: {_n_done}/{len(_rel_amr)} done…")
+        else:
+            st.session_state["_phy_amr_pending_jobs"] = []
+            _load_project_cached.clear()
+            st.rerun()
+
+    if st.session_state.get("_phy_amr_pending_jobs") and db:
+        _phy_amr_poll_status()
 
     st.subheader("Tree visualization")
 
@@ -185,13 +211,8 @@ def render() -> None:
             st.success(f"Tree loaded, generated with: **{_tree_method}**")
 
             _cgmlst_for_tree = st.session_state.get("phy_cgmlst_result") or {}
-            _gg_clusters = _cgmlst_for_tree.get("genogroup_clusters") or {}
-            if _gg_clusters:
-                clusters = _gg_clusters
-                cluster_source = "cgMLST genogroup (≤400 AD)"
-            else:
-                clusters = st.session_state.get("phy_clusters", {})
-                cluster_source = "SNP (ska2)"
+            clusters = _cgmlst_for_tree.get("genogroup_clusters") or {}
+            cluster_source = "cgMLST genogroup (≤400 AD)"
             upload_names = st.session_state.get("phy_upload_names", [])
 
             if clusters:
@@ -202,7 +223,11 @@ def render() -> None:
             else:
                 st.caption("No cluster data, re-run the analysis to generate clusters.")
 
-            tree_json = newick_to_tree_json(newick, clusters=clusters, upload_names=upload_names)
+            _phy_resistance = _render_amr_tree_highlight(_phy_active_proj, upload_names, "phy_tree")
+
+            tree_json = newick_to_tree_json(
+                newick, clusters=clusters, upload_names=upload_names, resistance=_phy_resistance,
+            )
             tree_json_str = json.dumps(tree_json)
             has_clusters = bool(clusters)
             legend_title = "Clusters" if has_clusters else "Sample type"
@@ -212,7 +237,7 @@ def render() -> None:
 <head>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <style>
-  body {{ margin: 0; background: white; font-family: Arial, sans-serif; overflow-x: hidden; }}
+  body {{ margin: 0; background: white; font-family: Arial, sans-serif; overflow-x: auto; }}
   .branch {{ fill: none; stroke: #444; stroke-width: 1px; }}
   .leaf-label {{ font-size: 11px; fill: #111; dominant-baseline: middle; }}
   #legend {{
@@ -230,7 +255,9 @@ def render() -> None:
 <script>
 const data = {tree_json_str};
 
-const margin = {{ top: 20, right: 460, bottom: 30, left: 50 }};
+const labelWidth = 280;
+const annotationWidth = 100;
+const margin = {{ top: 20, right: labelWidth + annotationWidth, bottom: 30, left: 50 }};
 const W = (window.innerWidth || 900);
 
 const root = d3.hierarchy(data);
@@ -274,60 +301,6 @@ sbG.append('text').attr('x', scaleBarLen / 2).attr('y', 14)
     .attr('text-anchor', 'middle').attr('font-size', '10px').attr('fill', '#666')
     .text(scaleBarVal);
 
-// Cluster shadows
-const clusterMap = {{}};
-root.leaves().forEach(l => {{
-    const c = l.data.cluster;
-    if (c && c !== '') {{
-        if (!clusterMap[c]) clusterMap[c] = [];
-        clusterMap[c].push(l);
-    }}
-}});
-
-const shadowPalette = [
-    'rgba(147,197,253,0.30)', 'rgba(249,168,212,0.30)',
-    'rgba(134,239,172,0.30)', 'rgba(253,224,132,0.30)',
-    'rgba(196,181,253,0.30)', 'rgba(103,232,249,0.30)',
-    'rgba(254,202,202,0.30)', 'rgba(167,243,208,0.30)',
-];
-let ci = 0;
-Object.entries(clusterMap)
-    .filter(([, ls]) => ls.length >= 2)
-    .sort(([a],[b]) => +a - +b)
-    .forEach(([c, ls]) => {{
-        const xs = ls.map(l => l.x);
-        const yMin = Math.min(...xs) - rowH * 0.6;
-        const yMax = Math.max(...xs) + rowH * 0.6;
-        const col = shadowPalette[ci++ % shadowPalette.length];
-        g.append('rect')
-            .attr('x', 0)
-            .attr('y', yMin)
-            .attr('width', treeW + 10)
-            .attr('height', yMax - yMin)
-            .attr('rx', 8)
-            .attr('fill', col);
-        const labelX = treeW + 240;
-        const labelY = (yMin + yMax) / 2;
-        const labelH = 22;
-        g.append('rect')
-            .attr('x', labelX - 8)
-            .attr('y', labelY - labelH / 2)
-            .attr('width', 110)
-            .attr('height', labelH)
-            .attr('rx', 5)
-            .attr('fill', col.replace('0.30', '0.70'))
-            .attr('stroke', col.replace('0.30', '0.90'))
-            .attr('stroke-width', 1);
-        g.append('text')
-            .attr('x', labelX)
-            .attr('y', labelY)
-            .attr('dominant-baseline', 'middle')
-            .attr('font-size', '12px')
-            .attr('font-weight', '700')
-            .attr('fill', '#1f2937')
-            .text('Cluster ' + c);
-    }});
-
 // Rectangular elbow branches
 g.selectAll('.branch')
     .data(root.links())
@@ -353,18 +326,79 @@ const leaves = g.selectAll('.leaf')
     .attr('class', 'leaf')
     .attr('transform', d => `translate(${{d.y}},${{d.x}})`);
 
+const resColor = {{ resistant: '#dc2626', susceptible: '#cbd5e1', no_data: '#e5e7eb' }};
 leaves.append('circle')
-    .attr('r', 5)
-    .attr('fill', d => d.data.color)
-    .attr('stroke', d => d.data.type === 'leaf_upload' ? '#333' : 'none')
-    .attr('stroke-width', 1.5);
+    .attr('r', d => d.data.resistance === 'resistant' ? 8 : (d.data.resistance ? 4 : 5))
+    .attr('fill', d => d.data.resistance ? (resColor[d.data.resistance] || d.data.color) : d.data.color)
+    .attr('stroke', d => d.data.resistance === 'resistant' ? '#7f1d1d'
+        : (d.data.type === 'leaf_upload' ? '#333' : 'none'))
+    .attr('stroke-width', d => d.data.resistance === 'resistant' ? 2 : 1.5)
+    .attr('opacity', d => (d.data.resistance && d.data.resistance !== 'resistant') ? 0.45 : 1);
 
 leaves.append('text')
     .attr('class', 'leaf-label')
     .attr('x', 9)
     .text(d => d.data.name);
 
-// Legend — node types (clusters are labelled on the shadows)
+const clusterLeaves = root.leaves().filter(
+    l => l.data.cluster !== undefined &&
+         l.data.cluster !== null &&
+         String(l.data.cluster) !== ''
+);
+
+const clusterIds = Array.from(
+    new Set(clusterLeaves.map(l => String(l.data.cluster)))
+).sort((a, b) => Number(a) - Number(b));
+
+const clusterColors = {{}};
+
+clusterIds.forEach((c, i) => {{
+    clusterColors[c] = d3.hsl(
+        (i * 360 / clusterIds.length) % 360,
+        0.55,
+        0.6
+    ).formatHex();
+}});
+
+const stripX = treeW + labelWidth;
+
+g.selectAll('.cluster-strip')
+    .data(clusterLeaves)
+    .join('rect')
+    .attr('class', 'cluster-strip')
+    .attr('x', stripX)
+    .attr('y', d => d.x - 7)
+    .attr('width', 14)
+    .attr('height', 14)
+    .attr('rx', 3)
+    .attr('fill', d => clusterColors[String(d.data.cluster)])
+    .attr('stroke', '#555')
+    .attr('stroke-width', 0.5)
+    .append('title')
+    .text(d => 'Cluster ' + d.data.cluster);
+
+g.selectAll('.cluster-num')
+    .data(clusterLeaves)
+    .join('text')
+    .attr('class', 'cluster-num')
+    .attr('x', stripX + 19)
+    .attr('y', d => d.x)
+    .attr('dominant-baseline', 'middle')
+    .attr('font-size', '10px')
+    .attr('fill', '#374151')
+    .text(d => d.data.cluster);
+
+if (clusterIds.length) {{
+    g.append('text')
+        .attr('x', stripX + 7)
+        .attr('y', -8)
+        .attr('text-anchor', 'middle')
+        .attr('font-size', '11px')
+        .attr('font-weight', '700')
+        .attr('fill', '#374151')
+        .text('Cluster');
+}}
+
 const legend = document.getElementById('legend');
 const typesSeen = {{}};
 root.leaves().forEach(n => {{
@@ -380,6 +414,32 @@ root.leaves().forEach(n => {{
         legend.appendChild(row);
     }}
 }});
+if (clusterIds.length) {{
+    const sepC = document.createElement('div');
+    sepC.style.cssText = 'border-top:1px solid #ddd;margin:6px 0;';
+    legend.appendChild(sepC);
+    clusterIds.forEach(c => {{
+        const row = document.createElement('div');
+        row.className = 'legend-row';
+        row.innerHTML = `<span class="legend-dot" style="background:${{clusterColors[c]}};border-radius:3px;"></span>Cluster ${{c}}`;
+        legend.appendChild(row);
+    }});
+}}
+const resistanceSeen = new Set();
+root.leaves().forEach(n => {{ if (n.data.resistance) resistanceSeen.add(n.data.resistance); }});
+if (resistanceSeen.size) {{
+    const resLabels = {{ resistant: 'Resistant', susceptible: 'Susceptible', no_data: 'No AMR data' }};
+    const sep = document.createElement('div');
+    sep.style.cssText = 'border-top:1px solid #ddd;margin:6px 0;';
+    legend.appendChild(sep);
+    ['resistant', 'susceptible', 'no_data'].forEach(k => {{
+        if (!resistanceSeen.has(k)) return;
+        const row = document.createElement('div');
+        row.className = 'legend-row';
+        row.innerHTML = `<span class="legend-dot" style="background:${{resColor[k]}}"></span>${{resLabels[k]}}`;
+        legend.appendChild(row);
+    }});
+}}
 </script>
 </body>
 </html>"""
@@ -389,7 +449,7 @@ root.leaves().forEach(n => {{
         
 
             st.download_button(
-                label="⬇ Download tree (Newick)",
+                label="Download tree (Newick)",
                 data=newick,
                 file_name="tree.nwk",
                 mime="text/plain",
@@ -410,67 +470,45 @@ root.leaves().forEach(n => {{
 
         if _has_cgmlst:
             st.caption(
-                "Primary clustering: cgMLST allele-based single-linkage at ≤7 AD (outbreak) "
-                "and ≤400 AD (genogroup), fixed, dataset-independent thresholds. "
+                "Primary clustering: cgMLST allele-based single-linkage at ≤400 AD "
+                "(genogroup), a fixed threshold. "
                 "SNP nearest-neighbour distance shown as complementary context."
             )
         else:
             st.caption(
-                "Clustering: single-linkage on SKA2 pairwise SNP distances. "
-                "Nearest-neighbour distance shown for each sample against the full panel."
+                "No cgMLST genogroup available for this run."
             )
 
         _cr_rows = []
-        _cg_outbreak_counts: dict = {}
-        if _has_cgmlst:
-            for _v in cluster_report.values():
-                _oc = (_v.get("cgmlst") or {}).get("outbreak_cluster")
-                if _oc is not None:
-                    _cg_outbreak_counts[_oc] = _cg_outbreak_counts.get(_oc, 0) + 1
-        _outbreak_sids: set = set()
 
         for _sname, _info in sorted(cluster_report.items()):
             _typing  = _info.get("typing", {})
             _cg      = _info.get("cgmlst", {})
-            _cg_out  = _cg.get("outbreak_cluster")
             _cg_geo  = _cg.get("genogroup")
-            if _cg_out is not None and _cg_outbreak_counts.get(_cg_out, 0) >= 2:
-                _outbreak_sids.add(_sname)
             _row = {
                 "Sample": _sname,
                 "Type":   "Uploaded" if _info.get("is_uploaded") else "Reference",
                 "Input":  _info.get("input_type", "assembly"),
             }
             if _has_cgmlst:
-                _row["cgMLST Genogroup (400 AD)"] = str(_cg_geo) if _cg_geo is not None else "—"
-                _row["cgMLST Outbreak (7 AD)"]    = str(_cg_out) if _cg_out is not None else "—"
+                _row["Cluster"] = str(_cg_geo) if _cg_geo is not None else "—"
             _row["Nearest neighbour"]  = _info.get("nearest_neighbour", "—")
             _row["NN distance (SNPs)"] = f"{_info.get('nn_distance', 0.0):.0f}"
             _row["NN distance (%)"]    = f"{_info.get('nn_distance_pct', 0.0):.4f}%"
             _row["NN type"]            = "Uploaded" if _info.get("nn_is_uploaded") else "Reference"
-            if not _has_cgmlst:
-                _row["SNP Genogroup"] = str(_info.get("cluster", "—"))
             if _has_typing:
-                _row["MLST ST"]           = _typing.get("mlst_st", "—")
-                _row["NG-STAR CC"]        = _typing.get("ngstar_cc", "—")
-                _row["NG-MAST Genogroup"] = _typing.get("ngmast_genogroup", "—")
-                _row["Mosaic penA"]       = _typing.get("mosaic_pena", "—")
+                _row["MLST ST"]     = _typing.get("mlst_st", "—")
+                _row["NG-STAR ST"]  = _typing.get("ngstar_st", "—")
+                _row["Mosaic penA"] = _typing.get("mosaic_pena", "—")
+                _row["NG-MAST ST"]  = _typing.get("ngmast_st", "—")
             _cr_rows.append(_row)
 
         _df_cr = pd.DataFrame(_cr_rows)
 
         def _cr_row_style(row):
-            if row["Sample"] in _outbreak_sids:
-                return ["background-color:#fef2f2;color:#7f1d1d"] * len(row)
             if row["Type"] == "Uploaded":
                 return ["background-color:#fef9c3;color:#713f12"] * len(row)
             return [""] * len(row)
-
-        if _outbreak_sids:
-            st.error(
-                f"{len(_outbreak_sids)} uploaded sample(s) share ≤7 allele differences "
-                "(cgMLST outbreak signal), verify with epidemiological data."
-            )
 
         st.dataframe(
             _df_cr.style.apply(_cr_row_style, axis=1),
@@ -502,202 +540,18 @@ root.leaves().forEach(n => {{
             for _r in _uploaded_rows:
                 _uc = {"Sample": _r["Sample"]}
                 if _has_cgmlst:
-                    _uc["cgMLST Genogroup (400 AD)"] = _r.get("cgMLST Genogroup (400 AD)", "—")
-                    _uc["cgMLST Outbreak (7 AD)"]    = _r.get("cgMLST Outbreak (7 AD)", "—")
-                else:
-                    _uc["SNP Genogroup"] = _r.get("SNP Genogroup", "—")
+                    _uc["Cluster"] = _r.get("Cluster", "—")
                 _uc["Nearest reference"] = _r["Nearest neighbour"] if _r["NN type"] == "Reference" else "—"
                 _uc["Distance (SNPs)"]   = _r["NN distance (SNPs)"]
                 _uc["Distance (%)"]      = _r["NN distance (%)"]
                 if _has_typing:
-                    _uc["MLST ST"]           = _r.get("MLST ST", "—")
-                    _uc["NG-STAR CC"]        = _r.get("NG-STAR CC", "—")
-                    _uc["NG-MAST Genogroup"] = _r.get("NG-MAST Genogroup", "—")
-                    _uc["Mosaic penA"]       = _r.get("Mosaic penA", "—")
+                    _uc["MLST ST"]     = _r.get("MLST ST", "—")
+                    _uc["NG-STAR ST"]  = _r.get("NG-STAR ST", "—")
+                    _uc["Mosaic penA"] = _r.get("Mosaic penA", "—")
+                    _uc["NG-MAST ST"]  = _r.get("NG-MAST ST", "—")
                 _uc_rows.append(_uc)
             st.dataframe(pd.DataFrame(_uc_rows), use_container_width=True, hide_index=True)
 
-    _cgmlst_result = st.session_state.get("phy_cgmlst_result")
-    if _cgmlst_result:
-        st.divider()
-        st.subheader("cgMLST Clustering")
-        st.caption(
-            f"Core genome: {_cgmlst_result.get('core_loci_count', '?')} loci (≥95% presence). "
-            "Single-linkage clustering applied at two calibrated thresholds. "
-            "Thresholds are fixed and dataset-independent, enabling longitudinal comparison."
-        )
-
-        _cg_stats = _cgmlst_result.get("sample_stats", {})
-        _cg_outbreak = _cgmlst_result.get("outbreak_clusters", {})
-        _cg_genogroup = _cgmlst_result.get("genogroup_clusters", {})
-
-        if _cg_stats:
-            _cg_tab1, _cg_tab2 = st.tabs(
-                ["Outbreak Clusters (≤7 AD)", "Genogroup Assignment (≤400 AD)"]
-            )
-
-            with _cg_tab1:
-                st.caption(
-                    "**7 allele difference threshold**, captures likely transmission pairs "
-                    "and active outbreaks. Samples sharing ≤7 AD are co-clustered. "
-                    "Two samples are in the same outbreak cluster if their cgMLST distance "
-                    "is ≤7 AD, or transitively linked through intermediates."
-                )
-                _oc_rows = []
-                for _sid, _st in sorted(_cg_stats.items()):
-                    _oc_rows.append({
-                        "Sample":           _sid,
-                        "Outbreak cluster": _st.get("outbreak_cluster", "—"),
-                        "Loci assigned":    _st.get("loci_assigned", "—"),
-                        "Loci total":       _st.get("loci_total", "—"),
-                        "% assigned":       f"{_st.get('pct_assigned', 0):.1f}%",
-                    })
-                _df_oc = pd.DataFrame(_oc_rows)
-
-                _oc_cluster_sizes = {}
-                for _sid, _cl in _cg_outbreak.items():
-                    _oc_cluster_sizes[_cl] = _oc_cluster_sizes.get(_cl, 0) + 1
-                _outbreak_sids = {s for s, c in _cg_outbreak.items() if _oc_cluster_sizes.get(c, 1) > 1}
-
-                def _oc_style(row):
-                    return (
-                        ["background-color:#fef2f2;color:#7f1d1d"] * len(row)
-                        if row["Sample"] in _outbreak_sids
-                        else [""] * len(row)
-                    )
-
-                st.dataframe(
-                    _df_oc.style.apply(_oc_style, axis=1),
-                    use_container_width=True,
-                    hide_index=True,
-                )
-
-                _outbreak_clusters = {c for c, n in _oc_cluster_sizes.items() if n > 1}
-                if _outbreak_clusters:
-                    st.warning(
-                        f"{len(_outbreak_sids)} sample(s) share ≤7 allele differences, "
-                        "possible active transmission. Verify with epidemiological data."
-                    )
-                else:
-                    st.success("No samples within 7 allele differences, no outbreak signal detected.")
-
-            with _cg_tab2:
-                st.caption(
-                    "**400 allele difference threshold (Ng_cgc_400)**, stable genogroup "
-                    "assignment persisting over decades. Equivalent to lineage-level classification. "
-                    "Use for longitudinal surveillance and strain tracking."
-                )
-                _gg_rows = []
-                _gg_cluster_sizes = {}
-                for _sid, _cl in _cg_genogroup.items():
-                    _gg_cluster_sizes[_cl] = _gg_cluster_sizes.get(_cl, 0) + 1
-                for _sid, _st in _cg_stats.items():
-                    _gg_rows.append({
-                        "Sample":    _sid,
-                        "Genogroup": _st.get("genogroup"),
-                        "% assigned": f"{_st.get('pct_assigned', 0):.1f}%",
-                    })
-                _gg_rows.sort(key=lambda r: (
-                    r["Genogroup"] if r["Genogroup"] is not None else float("inf"),
-                    r["Sample"],
-                ))
-                for _row in _gg_rows:
-                    _row["Genogroup"] = _row["Genogroup"] if _row["Genogroup"] is not None else "—"
-                st.dataframe(pd.DataFrame(_gg_rows), use_container_width=True, hide_index=True)
-
-            _cg_pairs = _cgmlst_result.get("pairwise", [])
-            if _cg_pairs:
-                with st.expander("Pairwise allele differences"):
-                    _pair_rows = []
-                    for _p in sorted(_cg_pairs, key=lambda x: x["allele_diff"]):
-                        _pair_rows.append({
-                            "Sample A":          _p["sample_a"],
-                            "Sample B":          _p["sample_b"],
-                            "Allele differences": _p["allele_diff"],
-                            "Outbreak link (≤7)": "Yes" if _p["outbreak_link"] else "No",
-                            "Same genogroup (≤400)": "Yes" if _p["same_genogroup"] else "No",
-                        })
-                    _df_pairs = pd.DataFrame(_pair_rows)
-
-                    def _pair_style(row):
-                        if row["Outbreak link (≤7)"] == "Yes":
-                            return ["background-color:#fef2f2;color:#7f1d1d"] * len(row)
-                        return [""] * len(row)
-
-                    st.dataframe(
-                        _df_pairs.style.apply(_pair_style, axis=1),
-                        use_container_width=True,
-                        hide_index=True,
-                    )
-
-            _cg_matrix_csv = _cgmlst_result.get("matrix_csv")
-            if _cg_matrix_csv and Path(_cg_matrix_csv).exists():
-                st.download_button(
-                    "⬇ cgMLST distance matrix (CSV)",
-                    data=Path(_cg_matrix_csv).read_bytes(),
-                    file_name="cgmlst_distances.csv",
-                    mime="text/csv",
-                    key="cgmlst_matrix_dl",
-                )
-
-    _snp_clusters = st.session_state.get("phy_snp_clusters")
-    if _snp_clusters:
-        st.markdown("---")
-        st.markdown("#### WGS SNP Clustering (ska2)")
-        st.caption(
-            f"Single-linkage clustering on pairwise split k-mer SNP distances. "
-            f"Transmission threshold: ≤{_snp_clusters.get('transmission', {}).get('threshold', SNP_TRANSMISSION_THRESHOLD)} SNPs · "
-            f"Outbreak threshold: ≤{_snp_clusters.get('outbreak', {}).get('threshold', SNP_OUTBREAK_THRESHOLD)} SNPs."
-        )
-
-        _snp_tabs = st.tabs([
-            f"Transmission clusters (≤{_snp_clusters.get('transmission', {}).get('threshold', SNP_TRANSMISSION_THRESHOLD)} SNPs)",
-            f"Outbreak clusters (≤{_snp_clusters.get('outbreak', {}).get('threshold', SNP_OUTBREAK_THRESHOLD)} SNPs)",
-        ])
-
-        for _snp_tab, _snp_level in zip(_snp_tabs, ["transmission", "outbreak"]):
-            with _snp_tab:
-                _level_data = _snp_clusters.get(_snp_level, {})
-                _level_clusters = _level_data.get("clusters", {})
-                _level_pairs    = _level_data.get("pairs", {})
-
-                if not _level_clusters:
-                    st.info("No data available.")
-                else:
-                    from collections import defaultdict as _ddict
-                    _by_cluster: dict = _ddict(list)
-                    for _samp, _clust in sorted(_level_clusters.items()):
-                        _by_cluster[_clust].append(_samp)
-
-                    _multi = {k: v for k, v in _by_cluster.items() if len(v) > 1}
-                    _single = {k: v for k, v in _by_cluster.items() if len(v) == 1}
-
-                    if _multi:
-                        st.markdown(f"**{len(_multi)} cluster(s) with ≥2 samples:**")
-                        for _cid, _members in sorted(_multi.items()):
-                            with st.expander(f"Cluster {_cid}, {len(_members)} samples", expanded=True):
-                                _pair_rows = []
-                                for _i, _a in enumerate(_members):
-                                    for _b in _members[_i + 1:]:
-                                        _key = f"{_a}||{_b}"
-                                        _rkey = f"{_b}||{_a}"
-                                        _dist = _level_pairs.get(_key) or _level_pairs.get(_rkey)
-                                        if _dist is not None:
-                                            _pair_rows.append({"Sample A": _a, "Sample B": _b, "SNPs": _dist})
-                                if _pair_rows:
-                                    st.dataframe(
-                                        pd.DataFrame(_pair_rows).sort_values("SNPs"),
-                                        hide_index=True,
-                                        use_container_width=True,
-                                    )
-                                else:
-                                    st.write(", ".join(_members))
-                    else:
-                        st.info("No samples clustered together at this threshold, all are genetically distinct.")
-
-                    if _single:
-                        st.markdown(f"**{len(_single)} singleton(s):** " + ", ".join(
-                            v[0] for v in sorted(_single.values())
-                        ))
+    _render_cgmlst_clustering(st.session_state.get("phy_cgmlst_result"), key_prefix="phy_cg")
 
 

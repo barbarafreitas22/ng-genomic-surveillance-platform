@@ -32,16 +32,17 @@ if not st.session_state.get("_entered_app"):
         from { opacity: 0; transform: translateY(16px); }
         to   { opacity: 1; transform: translateY(0); }
     }
-    [data-testid="stImage"] {
-        display: flex;
-        justify-content: center;
-        width: 100%;
+    .ng-logo-wrap {
+        text-align: center;
     }
-    [data-testid="stImage"] img {
+    .ng-logo-wrap img {
+        max-width: 340px;
+        width: 100%;
+        height: auto;
         animation: ngFadeUp 0.6s ease-out;
         transition: transform 0.25s ease;
     }
-    [data-testid="stImage"] img:hover {
+    .ng-logo-wrap img:hover {
         transform: scale(1.06);
     }
     h2 {
@@ -62,9 +63,17 @@ if not st.session_state.get("_entered_app"):
         except Exception:
             return None
 
+    @st.cache_data
+    def _logo_data_uri() -> str:
+        import base64
+        return "data:image/png;base64," + base64.b64encode(Path(LOGO_PATH).read_bytes()).decode()
+
     _c1, _c2, _c3 = st.columns([1, 2, 1])
     with _c2:
-        st.image(LOGO_PATH, width=340)
+        st.markdown(
+            f'<div class="ng-logo-wrap"><img src="{_logo_data_uri()}"></div>',
+            unsafe_allow_html=True,
+        )
         st.markdown(
             "<h2 style='text-align:center;'><em>Neisseria gonorrhoeae</em><br>Genomic Surveillance Platform</h2>",
             unsafe_allow_html=True,
@@ -75,6 +84,8 @@ if not st.session_state.get("_entered_app"):
                 f"<p style='text-align:center;color:#64748b;font-size:0.85rem;'>{_ref_stats}</p>",
                 unsafe_allow_html=True,
             )
+
+        st.markdown("<div style='margin-top:4.4rem;'></div>", unsafe_allow_html=True)
         if st.button("Enter platform", type="primary", width="stretch"):
             st.session_state["_entered_app"] = True
             st.rerun()
@@ -118,7 +129,7 @@ st.markdown("""
 }
 
 .block-container {
-  padding-top: 1.5rem;
+  padding-top: 4.5rem;
   padding-bottom: 3rem;
   max-width: 1200px;
 }
@@ -415,9 +426,8 @@ pages_list = [
     "1. Quality Control & Assembly",
     "2. AMR Profiling",
     "3. Phylogenetic Analysis",
-    "4. Sample Metadata",
-    "5. Neisseria gonorrhoeae Clinical Relevance",
-    "6. Platform Technical Documentation",
+    "4. Neisseria gonorrhoeae Clinical Relevance",
+    "5. Platform Technical Documentation",
 ]
 
 if "_nav_to" in st.session_state:
@@ -432,16 +442,6 @@ page = st.sidebar.selectbox(
     key="current_page",
 )
 
-_sidebar_proj = st.session_state.get("active_project")
-if db and _sidebar_proj:
-    try:
-        _n_unread = db.count_unread_alerts(_sidebar_proj)
-        if _n_unread > 0:
-            _sev_icon = "🔴" if _n_unread else ""
-            st.sidebar.error(f"{_sev_icon} **{_n_unread} unread alert(s)**")
-    except Exception:
-        pass
-
 if page == "Homepage":
     from views.homepage import render; render()
 elif page == "Full Pipeline Results":
@@ -452,9 +452,7 @@ elif page == "2. AMR Profiling":
     from views.amr import render; render()
 elif page == "3. Phylogenetic Analysis":
     from views.phylogenetic import render; render()
-elif page == "4. Sample Metadata":
-    from views.sample_metadata import render; render()
-elif page == "5. Neisseria gonorrhoeae Clinical Relevance":
+elif page == "4. Neisseria gonorrhoeae Clinical Relevance":
     from views.cr import render; render()
-elif page == "6. Platform Technical Documentation":
+elif page == "5. Platform Technical Documentation":
     from views.documentation import render; render()

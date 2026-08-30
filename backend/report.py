@@ -1,6 +1,11 @@
 from datetime import datetime
 from pathlib import Path
 
+
+def _plural(n: int, word: str, plural_form: str | None = None) -> str:
+    return word if n == 1 else (plural_form or f"{word}s")
+
+
 _PHENOTYPE_LABEL = {
     "ceftriaxone_reduced_susceptibility":  "Ceftriaxone reduced susceptibility",
     "high_level_azithromycin_resistance":  "Azithromycin high-level resistance",
@@ -12,13 +17,12 @@ _PHENOTYPE_LABEL = {
     "reduced_beta_lactam_susceptibility":  "Beta-lactam reduced susceptibility",
     "tetracycline_chromosomal_resistance": "Tetracycline chromosomal resistance",
     "reduced_penicillin_susceptibility":   "Penicillin reduced susceptibility",
-    "efflux_pump_overexpression":          "MtrCDE efflux — reduced susceptibility (penicillin, tetracycline, azithromycin)",
-    "norM_efflux_upregulation":            "NorM efflux — reduced fluoroquinolone susceptibility",
+    "efflux_pump_overexpression":          "MtrCDE efflux: reduced susceptibility (penicillin, tetracycline, azithromycin)",
+    "norM_efflux_upregulation":            "NorM efflux: reduced fluoroquinolone susceptibility",
     "efflux_tetracycline_contribution":    None,
-    "penA_allele_likely_mosaic":           None,
+    "penA_allele_likely_mosaic":           "Mosaic penA pattern suspected (≥3 associated mutations)",
     "fluoroquinolone_minor_parE":          None,
-    "fluoroquinolone_minor_gyrB":          None,
-    "zoliflodacin_resistance_gyrB":        None,
+    "zoliflodacin_reduced_susceptibility": "Zoliflodacin reduced susceptibility (investigational)",
 }
 
 def _fmt_phenotypes(cdc: list, sep: str = "; ") -> str:
@@ -51,12 +55,11 @@ _QC_COLORS  = {
 }
 
 _ASM_THR_DEFS = [
-    ("min_genome_fraction", "Core genes %", "completeness",  "%",  True),
-    ("min_n50",             "N50",             "n50",           " bp", True),
-    ("max_contigs",         "Contigs",         "n_contigs",     "",   False),
-    ("min_total_len",       "Min total length","total_len",     " bp", True),
-    ("max_total_len",       "Max total length","total_len",     " bp", False),
-    ("max_misassemblies",   "Misassemblies",   "misassemblies", "",   False),
+    ("min_genome_fraction", "Core genes %",      "completeness", "%",  True),
+    ("min_n50",             "N50",               "n50",          " bp", True),
+    ("max_contigs",         "Contigs",           "n_contigs",    "",   False),
+    ("min_total_len",       "Min total length",  "total_len",    " bp", True),
+    ("max_total_len",       "Max total length",  "total_len",    " bp", False),
 ]
 
 
@@ -136,7 +139,7 @@ tr:last-child td { border-bottom: none; }
 
 def _build_overview(samples: dict) -> str:
     from backend.assembly import parse_contigs_stats
-    from backend.phylogeny.cgmlst import core_genome_completeness
+    from backend.phylogeny.cgmlst import core_genome_gene_count
 
     headers = [
         "Sample", "Coverage", "≥10× breadth", "Species", "Assembly QC",
@@ -160,7 +163,7 @@ def _build_overview(samples: dict) -> str:
         cst = None
         if ctg_path and Path(ctg_path).exists():
             try:
-                core_genome_completeness(ctg_path, str(Path(ctg_path).parent))
+                core_genome_gene_count(ctg_path)
                 cst = parse_contigs_stats(Path(ctg_path))
             except Exception:
                 pass
@@ -192,7 +195,7 @@ def _build_overview(samples: dict) -> str:
 
 def _build_assembly_thresholds(samples: dict) -> str:
     from backend.assembly import parse_contigs_stats, ASSEMBLY_QC_THRESHOLDS
-    from backend.phylogeny.cgmlst import core_genome_completeness
+    from backend.phylogeny.cgmlst import core_genome_gene_count
 
     rows = []
     for sid, data in sorted(samples.items()):
@@ -201,15 +204,16 @@ def _build_assembly_thresholds(samples: dict) -> str:
         if not ctg_path or not Path(ctg_path).exists():
             continue
         try:
-            core_genome_completeness(ctg_path, str(Path(ctg_path).parent))
+            core_genome_gene_count(ctg_path)
             cst = parse_contigs_stats(Path(ctg_path))
         except Exception:
             continue
         if cst is None:
             continue
         _cst_d = cst.to_dict()
+        _pass_tier = ASSEMBLY_QC_THRESHOLDS.get("pass", {})
         for thr_key, label, stat_key, unit, is_min in _ASM_THR_DEFS:
-            thr = ASSEMBLY_QC_THRESHOLDS.get(thr_key)
+            thr = ASSEMBLY_QC_THRESHOLDS.get(thr_key, _pass_tier.get(thr_key))
             val = _cst_d.get(stat_key)
             if thr is None or val is None:
                 continue
@@ -333,9 +337,9 @@ def generate_html_report(
 {_section("1. Genomic Overview", overview_html)}
 
 {_section(
-    "2. Assembly Quality — QUAST Thresholds",
+    "2. Assembly Quality — CDC AR Lab Network EQA Thresholds",
     asm_thr_html,
-    note="Thresholds for <em>N. gonorrhoeae</em>: core genes ≥90% (cgMLST scheme), N50 ≥10 kb, contigs ≤500, total length 1.9–2.5 Mb, misassemblies ≤5."
+    note="Pass/caution tiers for <em>N. gonorrhoeae</em> (≥2 of 3 metrics): contigs ≤150/180, N50 &gt;30/20 kb, total length 2.0–2.2/1.8–2.2 Mb. Independent hard-fail checks: GC% 50–56%, core genome completeness ≥90% (BLASTN vs curated core gene set)."
 )}
 
 {_section("3. AMR Resistance Mutations", mut_html)}
@@ -343,13 +347,13 @@ def generate_html_report(
 {_section(
     "4. Clinical Interpretation",
     clinical_html,
-    note="Based on European 2020 (IUSTI) treatment guidelines. Score = treatment failure probability estimate."
+    note="Based on European 2020 (IUSTI) treatment guidelines. Score = ordinal resistance severity index (0.0–1.0), not a calibrated probability."
 )}
 
 {_section(
     "5. Phylogeny — Cluster Report",
     phylogeny_html,
-    note="Genogroup clusters: single-linkage on SKA2 pairwise SNP distances, fixed threshold ≤2000 SNPs. PopPUNK clusters are recombination-aware (shown when model is available)."
+    note="Genogroup: cgMLST allele-based single-linkage clustering at ≤400 allele differences (Harrison et al. 2020), a fixed, dataset-independent threshold."
 )}
 """
 
@@ -358,7 +362,7 @@ def generate_html_report(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>NG Surveillance Report — {project_name}</title>
+<title>NG Surveillance Report: {project_name}</title>
 <style>{_css()}</style>
 </head>
 <body>
@@ -366,7 +370,7 @@ def generate_html_report(
 <h1>&#x1F9EC; <em>Neisseria gonorrhoeae</em> Genomic Surveillance Report</h1>
 <p style="font-size:12px;color:#6b7280;margin-bottom:4px">
   Project: <strong>{project_name}</strong> &nbsp;·&nbsp;
-  {n_samp} sample(s) &nbsp;·&nbsp;
+  {n_samp} {_plural(n_samp, 'sample')} &nbsp;·&nbsp;
   {n_asm} assembled &nbsp;·&nbsp;
   {n_amr} with AMR profiling &nbsp;·&nbsp;
   Generated: {now}

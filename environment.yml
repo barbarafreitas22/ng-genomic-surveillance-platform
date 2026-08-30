@@ -23,21 +23,21 @@ dependencies:
   - pip
   - fastqc
   - fastp
-  - multiqc
   - minimap2
   - samtools
   - bcftools
   - kraken2
   - blast
+  - ncbi-datasets-cli
   - mlst
   - mash
   - rapidnj
-  - ska2
+  - ska2=0.5.1
   - spades
-  - quast
   - pip:
     - vega-datasets
     - newick
     - pyfastx
     - scikit-image
     - pyngoST
+    - chewbbaca

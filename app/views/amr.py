@@ -1,15 +1,8 @@
 from __future__ import annotations
-import json
 import os
-import re
-import tempfile
-import time
-import base64
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Optional
 
-import altair as alt
 import pandas as pd
 import streamlit as st
 
@@ -17,7 +10,7 @@ from views.shared import *
 from views.shared import (
     _load_project_cached,
     _render_cohort_amr_profile, _inline_metadata_widget,
-    _render_essential_gene_markers,
+    _render_essential_gene_markers, _render_drug_matrix,
 )
 from backend.models import AMRResult as _AMRResult
 
@@ -42,17 +35,28 @@ def render() -> None:
         st.session_state["_amr_loaded_project"] = _amr_proj
 
     if _amr_proj:
-        st.caption(f"Project: **{_amr_proj}** — results saved automatically")
+        st.caption(f"Project: **{_amr_proj}**")
+        if st.button("Delete all results", key="del_amr_only_btn"):
+            from backend.db import delete_amr as _delete_amr_only
+            _delete_amr_only(_amr_proj)
+            for _k in ("amr_manual_results", "amr_manual_bytes", "amr_manual_errors",
+                       "_amr_loaded_project"):
+                st.session_state.pop(_k, None)
+            _fpr_state = st.session_state.get("full_pipeline_results")
+            if _fpr_state and "amr" in _fpr_state:
+                _fpr_state["amr"] = {}
+            _load_project_cached.clear()
+            st.rerun()
     else:
-        st.caption("No project selected — results will not be saved. Open a project on the Home page first.")
+        st.caption("No project selected. Open a project on the Home page first.")
 
     st.markdown("""
-    This module screens assembled *N. gonorrhoeae* contigs for antimicrobial resistance determinants,
-    combining two complementary sources of evidence:
+    This module searches assembled *N. gonorrhoeae* contigs for antimicrobial resistance determinants,
+    combining two complementary mechanisms:
 
     - **Chromosomal mutations** — point mutations in resistance-associated genes, reported in amino-acid
-      notation (e.g. *gyrA* S91F)
-    - **Plasmid-borne genes** — acquired resistance genes, reported as presence/absence (e.g. *blaTEM-1*)
+      notation.
+    - **Plasmid genes** — acquired resistance genes, reported as binary presence/absence.
 
     The pipeline aligns each assembly against a curated resistance-gene panel with **Minimap2**, calls
     variants with **BCFtools**, and interprets the results against the **European 2020 (IUSTI) treatment
@@ -72,7 +76,6 @@ def render() -> None:
                 st.session_state[_sel_key] = None
                 st.rerun()
             st.markdown(f"### {_active_sid}")
-            _tbl_ctg = st.session_state.get("assembly_results", {}).get(_active_sid, {}).get("contigs_path")
             if bytes_map and _active_sid in bytes_map:
                 fname, fbytes = bytes_map[_active_sid]
                 _dc, _vc, _ = st.columns([2, 2, 5])
@@ -90,7 +93,7 @@ def render() -> None:
                         preview += f"\n… ({len(lines) - 50} more lines)"
                     st.code(preview, language=None)
                 st.markdown("")
-            render_amr_interpretation(valid[_active_sid], sample_label=_active_sid, contigs_path=_tbl_ctg)
+            render_amr_interpretation(valid[_active_sid], sample_label=_active_sid)
             return
 
         _PHENOTYPE_LABEL = {
@@ -107,10 +110,9 @@ def render() -> None:
             "efflux_pump_overexpression":          "MtrCDE efflux — reduced susceptibility (penicillin, tetracycline, azithromycin)",
             "norM_efflux_upregulation":            "NorM efflux — reduced fluoroquinolone susceptibility",
             "efflux_tetracycline_contribution":    None,
-            "penA_allele_likely_mosaic":           None,
+            "penA_allele_likely_mosaic":           "Mosaic penA pattern suspected (≥3 associated mutations)",
             "fluoroquinolone_minor_parE":          None,
-            "fluoroquinolone_minor_gyrB":          None,
-            "zoliflodacin_resistance_gyrB":        None,
+            "zoliflodacin_reduced_susceptibility": "Zoliflodacin reduced susceptibility (investigational)",
         }
 
         def _pheno_label(p: str) -> str | None:
@@ -129,6 +131,7 @@ def render() -> None:
             ther        = res.therapy
             mlst        = res.mlst
             ngstar      = res.ngstar
+            ngmast      = res.ngmast
             who_matches = res.who_matches
             res_cat     = res.resistance_category
 
@@ -139,6 +142,7 @@ def render() -> None:
             treatment  = (ther.get("recommend") or ["—"])[0] if ther else "—"
             st_val     = mlst.get("st") or "—" if not mlst.get("error") else "—"
             ngstar_val = f"ST-{ngstar['ST']}" if not ngstar.get("error") and ngstar.get("ST") else "—"
+            ngmast_val = f"ST-{ngmast['ST']}" if not ngmast.get("error") and ngmast.get("ST") else "—"
 
             has_xdr = any(m["mdr_class"] == "XDR" for m in who_matches)
             is_mdr_xdr = has_xdr or res_cat == "MDR"
@@ -148,6 +152,7 @@ def render() -> None:
                 "Sample":                     sample_label,
                 "NG-STAR":                    ngstar_val,
                 "ST (MLST)":                  st_val,
+                "NG-MAST":                    ngmast_val,
                 "Genomic AMR Interpretation": treatment,
                 "CDC phenotype":              phenotypes,
                 "Score":                      f"{prob*100:.1f}%",
@@ -160,6 +165,7 @@ def render() -> None:
                 "Sample":                     sid,
                 "NG-STAR":                    "—",
                 "ST (MLST)":                  "—",
+                "NG-MAST":                    "—",
                 "Genomic AMR Interpretation": errors[sid][:80],
                 "CDC phenotype":              "—",
                 "Score":                      "—",
@@ -208,6 +214,9 @@ def render() -> None:
         else:
             st.caption("Click a row in the table above to view the full report for that sample.")
 
+        st.markdown("##### Genomic Interpretation for all samples")
+        _render_drug_matrix({sid: valid[sid].therapy for sid in sample_order if sid in valid})
+
     pipeline_results = st.session_state.get("full_pipeline_results")
     amr_pipeline = pipeline_results.get("amr", {}) if pipeline_results else {}
 
@@ -215,8 +224,7 @@ def render() -> None:
         valid_pipe = {sid: r for sid, r in amr_pipeline.items() if isinstance(r, _AMRResult)}
         if len(valid_pipe) == 1:
             sid = next(iter(valid_pipe))
-            _pipe_ctg = (pipeline_results or {}).get("assembly", {}).get(sid, {}).get("contigs_path")
-            render_amr_interpretation(valid_pipe[sid], sample_label=sid, contigs_path=_pipe_ctg)
+            render_amr_interpretation(valid_pipe[sid], sample_label=sid)
         elif valid_pipe:
             render_amr_summary_table(amr_pipeline, key_prefix="pipe", project_name=_amr_proj)
         else:
@@ -224,8 +232,6 @@ def render() -> None:
                 err = r.get("error", "unknown error") if isinstance(r, dict) else "unrecognized result"
                 st.error(f"**{sid}**: {err}")
         st.divider()
-
-    #  Manual results
     manual_results = {
         sid: r for sid, r in st.session_state.get("amr_manual_results", {}).items()
         if sid not in amr_pipeline
@@ -259,14 +265,7 @@ def render() -> None:
                         preview += f"\n… ({len(lines) - 50} more lines)"
                     st.code(preview, language=None)
                 st.markdown("")
-            _man_ctg = None
-            if sid in manual_bytes:
-                import tempfile
-                fname, fbytes = manual_bytes[sid]
-                _tmp = Path(tempfile.gettempdir()) / f"amr_manual_{sid}_{fname}"
-                _tmp.write_bytes(fbytes)
-                _man_ctg = str(_tmp)
-            render_amr_interpretation(manual_results[sid], sample_label=sid, contigs_path=_man_ctg)
+            render_amr_interpretation(manual_results[sid], sample_label=sid)
         else:
             render_amr_summary_table(manual_results, bytes_map=manual_bytes, key_prefix="man", project_name=_amr_proj)
         st.divider()
@@ -278,6 +277,14 @@ def render() -> None:
             if "amr" in d
         }
         _render_cohort_amr_profile(_amr_cohort_data, project_name=_amr_proj)
+
+        try:
+            _amr_meta = db.load_metadata(_amr_proj)
+        except Exception:
+            _amr_meta = {}
+        if _amr_meta:
+            st.markdown("##### Metadata Overview")
+            render_metadata_charts(_amr_meta, list(_amr_cohort_data.keys()), project_name=_amr_proj)
 
     has_any_results = bool(amr_pipeline) or bool(manual_results)
 
@@ -309,14 +316,14 @@ def render() -> None:
             _load_project_cached.clear()
 
             if not _contigs_map:
-                st.info("Results deleted. No assembled contigs found — upload genomes via 'Run on new samples'.")
+                st.info("Results deleted. No assembled contigs found, upload genomes via 'Run on new samples'.")
                 st.rerun()
 
             _rerun_results: dict = {}
             _rerun_errors:  dict = {}
             _n_rr = len(_contigs_map)
             _workers_rr = max(1, min(_n_rr, (os.cpu_count() or 2) // 2))
-            _prog = st.progress(0, text=f"Re-running AMR for {_n_rr} sample(s) — {_workers_rr} in parallel…")
+            _prog = st.progress(0, text=f"Re-running AMR for {_n_rr} {plural(_n_rr, 'sample')}: {_workers_rr} in parallel…")
             _done_rr = 0
             with ThreadPoolExecutor(max_workers=_workers_rr) as _exec_rr:
                 _rr_futures = {
@@ -326,7 +333,7 @@ def render() -> None:
                 for _fut in as_completed(_rr_futures):
                     _sid = _rr_futures[_fut]
                     _done_rr += 1
-                    _prog.progress(_done_rr / _n_rr, text=f"Done {_done_rr}/{_n_rr} — {_sid}")
+                    _prog.progress(_done_rr / _n_rr, text=f"Done {_done_rr}/{_n_rr}: {_sid}")
                     try:
                         _res = _fut.result()
                         _rerun_results[_sid] = _res
@@ -347,7 +354,7 @@ def render() -> None:
             if _n_err:
                 st.warning(f"Re-run complete: {_n_ok} succeeded, {_n_err} failed.")
             else:
-                st.success(f"Re-run complete — {_n_ok} sample(s) analysed.")
+                st.success(f"Re-run complete: {_n_ok} {plural(_n_ok, 'sample')} analysed.")
             st.rerun()
 
     # Upload
@@ -399,7 +406,7 @@ def render() -> None:
                     _amr_saved_map[sid] = _path
                     _amr_all_saved.append(_path)
 
-                prog.progress(0, text=f"Analysing {_n_amr} sample(s) — {_workers_amr} in parallel…")
+                prog.progress(0, text=f"Analysing {_n_amr} {plural(_n_amr, 'sample')}: {_workers_amr} in parallel…")
                 _done_amr = 0
                 try:
                     with ThreadPoolExecutor(max_workers=_workers_amr) as _exec_amr:
@@ -410,7 +417,7 @@ def render() -> None:
                         for _fut in as_completed(_amr_futures):
                             _sid = _amr_futures[_fut]
                             _done_amr += 1
-                            prog.progress(_done_amr / _n_amr, text=f"Done {_done_amr}/{_n_amr} — {_sid}")
+                            prog.progress(_done_amr / _n_amr, text=f"Done {_done_amr}/{_n_amr}: {_sid}")
                             try:
                                 _res = _fut.result()
                                 run_results[_sid] = _res

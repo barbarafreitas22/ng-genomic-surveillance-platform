@@ -26,7 +26,7 @@ RUN micromamba install -n ng -c conda-forge -c defaults \
     && micromamba clean --all --yes
 
 RUN micromamba install -n ng -c bioconda -c conda-forge \
-        fastqc fastp multiqc \
+        fastqc fastp \
         minimap2 samtools bcftools \
         kraken2 blast ncbi-datasets-cli \
         mlst mash rapidnj ska2=0.5.1 \
@@ -55,7 +55,7 @@ RUN apt-get update -qq && apt-get install -y --no-install-recommends \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 RUN micromamba run -n ng pip install --no-cache-dir \
-        quast vega-datasets newick pyfastx scikit-image pyngoST chewbbaca && \
+        vega-datasets newick pyfastx scikit-image pyngoST chewbbaca && \
     sed -i "s/from Bio.Align.Applications import MuscleCommandline/try:\n    from Bio.Align.Applications import MuscleCommandline\nexcept ImportError:\n    MuscleCommandline = None/" \
         /opt/conda/envs/ng/lib/python3.10/site-packages/pyngoST/pyngoST_utils.py
 
@@ -79,15 +79,6 @@ RUN mkdir -p \
     data/phylogeny/cgmlst_schema \
     data/phylogeny/ska_cache/sample_sketch_cache \
     results
-
-RUN micromamba run -n ng python - <<'PYEOF' || echo "cgMLST schema download skipped — run from the UI after startup"
-import sys, os
-sys.path.insert(0, '/workspace')
-os.chdir('/workspace')
-from backend.phylogeny.cgmlst import download_schema, is_schema_ready
-if not is_schema_ready():
-    download_schema()
-PYEOF
 
 RUN micromamba run -n ng python scripts/build_kraken2_db.py \
     || echo "Kraken2 database build skipped — run scripts/build_kraken2_db.py manually after startup"

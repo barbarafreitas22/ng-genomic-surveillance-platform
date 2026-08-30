@@ -8,10 +8,9 @@ services:
     ports:
       - "${NG_PORT:-8501}:8501"
     volumes:
+      - ./data/phylogeny:/workspace/data/phylogeny
       - ng_projects:/workspace/app/projects
       - ng_phylo_runs:/workspace/backend/phylogeny/runs
-      - ng_pyngost_db:/workspace/data/phylogeny/pyngost_db
-      - ng_cgmlst_schema:/workspace/data/phylogeny/cgmlst_schema
       - ng_ska_cache:/workspace/data/phylogeny/ska_cache
       - ng_results:/workspace/results
     restart: unless-stopped
@@ -32,10 +31,9 @@ services:
     entrypoint: ["python", "-m", "backend.worker"]
     working_dir: /workspace
     volumes:
+      - ./data/phylogeny:/workspace/data/phylogeny
       - ng_projects:/workspace/app/projects
       - ng_phylo_runs:/workspace/backend/phylogeny/runs
-      - ng_pyngost_db:/workspace/data/phylogeny/pyngost_db
-      - ng_cgmlst_schema:/workspace/data/phylogeny/cgmlst_schema
       - ng_ska_cache:/workspace/data/phylogeny/ska_cache
       - ng_results:/workspace/results
     environment:
@@ -53,7 +51,5 @@ services:
 volumes:
   ng_projects:
   ng_phylo_runs:
-  ng_pyngost_db:
-  ng_cgmlst_schema:
   ng_ska_cache:
   ng_results:

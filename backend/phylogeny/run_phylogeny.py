@@ -13,8 +13,6 @@ from pathlib import Path
 
 import pandas as pd
 from Bio import SeqIO
-from scipy.cluster.hierarchy import linkage, fcluster
-from scipy.spatial.distance import squareform
 
 try:
     import psutil as _psutil
@@ -43,7 +41,6 @@ def _memory_aware_workers(max_by_count: int, gb_per_worker: float) -> int:
 
 from ..paths import (
     BASE_GENOMES_DIR, RUNS_DIR,
-    SNP_TRANSMISSION_THRESHOLD, SNP_OUTBREAK_THRESHOLD,
     BACKBONE_SKETCH, BACKBONE_HASH_FILE, BACKBONE_METADATA_PATH, BACKBONE_FILE_LIST,
     SAMPLE_SKETCH_CACHE_DIR, SAMPLE_SKETCH_MANIFEST,
 )
@@ -263,49 +260,6 @@ def _cached_sample_sketch_fastq(r1: str, r2: str, node_name: str, manifest: dict
     return sketch_path
 
 
-def snp_threshold_clusters(snp_matrix: pd.DataFrame, upload_names: set) -> dict:
-    """
-    Single-linkage clustering on ska2 SNP distances at two fixed thresholds.
-    Returns cluster assignments and pairwise distances for uploaded samples only.
-    """
-    samples = list(snp_matrix.index)
-    if len(samples) < 2:
-        return {}
-
-    condensed = squareform(snp_matrix.values)
-    Z = linkage(condensed, method="single")
-
-    result = {}
-    for name, threshold in [
-        ("transmission", SNP_TRANSMISSION_THRESHOLD),
-        ("outbreak",     SNP_OUTBREAK_THRESHOLD),
-    ]:
-        raw_labels = fcluster(Z, t=threshold, criterion="distance")
-        all_clusters: dict[str, int] = {s: int(l) for s, l in zip(samples, raw_labels)}
-
-        upload_labels = {s: all_clusters[s] for s in samples if s in upload_names}
-        seen: dict[int, int] = {}
-        renumbered: dict[str, int] = {}
-        for s, lbl in upload_labels.items():
-            if lbl not in seen:
-                seen[lbl] = len(seen) + 1
-            renumbered[s] = seen[lbl]
-
-        uploads = [s for s in samples if s in upload_names]
-        pairs = {}
-        for i, a in enumerate(uploads):
-            for b in uploads[i + 1:]:
-                pairs[f"{a}||{b}"] = int(snp_matrix.loc[a, b])
-
-        result[name] = {
-            "threshold": threshold,
-            "clusters":  renumbered,
-            "pairs":     pairs,
-        }
-
-    return result
-
-
 def ska_pairwise_to_matrix(tsv_path):
     rows = []
     with open(tsv_path) as f:
@@ -342,6 +296,26 @@ def write_phylip(matrix, out_path):
 
 
 def build_distance_tree(uploaded_samples):
+    """
+    Main entry point for Module 3 and the Full Pipeline. Both callers only
+    ever pass assembled genomes (FASTA): Module 3's own uploader is
+    FASTA-only, and the Full Pipeline always assembles reads before
+    handing genomes to this function. Sketches the genomes with SKA2,
+    merges them with the pre-built backbone sketch, computes pairwise
+    SNP distances, builds an NJ tree (RapidNJ). If chewBBACA/schema are
+    available, layers on cgMLST genogroup clustering (see
+    backend/phylogeny/cgmlst.py), the only source for `clusters`.
+
+    Args:
+        uploaded_samples: list of sample dicts or paths (assembled
+            FASTA) to place on the tree.
+
+    Returns:
+        dict with tree_path, matrix_path, cluster_report (per-sample
+        nearest-neighbour + typing + cgmlst stats), clusters (genogroup
+        assignment per sample, empty for samples without one), and
+        cgmlst_result (None if cgMLST wasn't available for this run).
+    """
     ensure_dirs()
 
     run_id  = str(uuid.uuid4())
@@ -376,7 +350,7 @@ def build_distance_tree(uploaded_samples):
         is_fasta = sample["kind"] == "fasta"
         if is_fasta:
             gpath = Path(sample["path"])
-            base = sample.get("name") or _re.sub(r'[_\-]r?[12]$', '', gpath.stem, flags=_re.IGNORECASE)
+            base = sample.get("name") or gpath.stem
         else:
             base = sample["name"]
 
@@ -434,8 +408,6 @@ def build_distance_tree(uploaded_samples):
     matrix, prop_matrix = ska_pairwise_to_matrix(dist_tsv)
     write_phylip(matrix, dist_phylip)
 
-    snp_clusters = snp_threshold_clusters(matrix, upload_names)
-
     newick_out = run(["rapidnj", dist_phylip, "-i", "pd", "-o", "t"])
     if not newick_out.strip():
         raise RuntimeError("Empty tree returned by rapidNJ")
@@ -449,7 +421,7 @@ def build_distance_tree(uploaded_samples):
         for e in entries
     }
 
-    clusters = {sample: "" for sample in matrix.index}
+    clusters: dict = {}
 
     matrix_csv = os.path.join(run_dir, "distances.csv")
     matrix.to_csv(matrix_csv)
@@ -465,7 +437,6 @@ def build_distance_tree(uploaded_samples):
         nn_dist = float(others.min())
         nn_pct  = round(float(prop_matrix.loc[sample, nn_name]) * 100, 4)
         entry = {
-            "cluster":           clusters.get(sample, ""),
             "is_uploaded":       sample in upload_names,
             "input_type":        input_types.get(sample, "assembly"),
             "nearest_neighbour": nn_name,
@@ -487,7 +458,7 @@ def build_distance_tree(uploaded_samples):
                 if sample in cluster_report:
                     cluster_report[sample]["typing"] = tdata
         except Exception:
-            logger.exception("MLST/NG-STAR/NG-MAST typing failed for run_dir=%s", run_dir)
+            logger.exception("MLST/NG-STAR typing failed for run_dir=%s", run_dir)
 
     cgmlst_result = None
     try:
@@ -497,14 +468,10 @@ def build_distance_tree(uploaded_samples):
         if upload_raw_paths and is_chewbbaca_available() and is_schema_ready():
             cgmlst_result = run_cgmlst_clustering(upload_raw_paths, run_dir)
             cg_geo = cgmlst_result.get("genogroup_clusters", {})
-            cg_out = cgmlst_result.get("outbreak_clusters", {})
             for sample, stats in cgmlst_result.get("sample_stats", {}).items():
                 if sample in cluster_report:
                     cluster_report[sample]["cgmlst"] = stats
-            clusters = {
-                name: (cg_geo[name] if name in cg_geo else "")
-                for name in clusters
-            }
+            clusters.update(cg_geo)
     except Exception:
         logger.exception("cgMLST clustering failed for run_dir=%s", run_dir)
 
@@ -519,20 +486,4 @@ def build_distance_tree(uploaded_samples):
         "upload_names":   list(upload_names),
         "pyngost_ready":  pyngost_ready,
         "cgmlst_result":  cgmlst_result,
-        "snp_clusters":   snp_clusters,
     }
-
-
-def cluster_report_to_dataframe(cluster_report: dict) -> pd.DataFrame:
-    rows = [
-        {
-            "sample":            name,
-            "cluster":           info.get("cluster"),
-            "nearest_neighbour": info.get("nearest_neighbour"),
-            "nn_distance_snp":   info.get("nn_distance"),
-            "nn_distance_pct":   info.get("nn_distance_pct"),
-            "is_uploaded":       info.get("is_uploaded", False),
-        }
-        for name, info in cluster_report.items()
-    ]
-    return pd.DataFrame(rows).sort_values("cluster", ignore_index=True)

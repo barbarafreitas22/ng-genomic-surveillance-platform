@@ -28,7 +28,7 @@ def build_panel(genomes_dir: Path, output_path: Path) -> None:
         sys.exit(1)
 
     n = len(genome_files)
-    print(f"Reference panel: {n} genome(s) in {genomes_dir}")
+    print(f"Reference panel: {n} {'genome' if n == 1 else 'genomes'} in {genomes_dir}")
 
     gene_refs = [
         f for f in sorted(GENE_DB_CROM.glob("*.fasta"))
@@ -72,7 +72,7 @@ def build_panel(genomes_dir: Path, output_path: Path) -> None:
         json.dump(panel, fh, indent=2)
 
     total_muts = sum(len(v) for v in frequencies.values())
-    print(f"Done — {total_muts} unique synonymous variants across {n} genome(s)")
+    print(f"Done: {total_muts} unique synonymous variants across {n} {'genome' if n == 1 else 'genomes'}")
     print(f"Panel saved to: {output_path}")
 
 

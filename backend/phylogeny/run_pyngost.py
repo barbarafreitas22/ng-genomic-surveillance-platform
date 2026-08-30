@@ -1,12 +1,16 @@
 import csv
 import glob
 import os
+import shutil
 import subprocess
 import sys
+import urllib.request
 from pathlib import Path
 
 from ..paths import PYNGOST_DB_DIR as _PYNGOST_DB_DIR
 PYNGOST_DB_DIR = str(_PYNGOST_DB_DIR)
+
+NGSTAR_CCS_URL = "https://raw.githubusercontent.com/leosanbu/pyngoST/main/db/NG-STAR_CC_db_250213.csv"
 
 
 def _script_path() -> str:
@@ -27,15 +31,36 @@ def is_pyngost_ready() -> bool:
     )
 
 
+def is_ngstar_cc_ready() -> bool:
+    profiles = os.path.join(PYNGOST_DB_DIR, "NGSTAR_profiles.tab")
+    if not os.path.isfile(profiles):
+        return False
+    with open(profiles) as f:
+        header = f.readline()
+    return "NG-STAR_CC" in header
+
+
 def download_pyngost_db() -> str:
     """
-    Download MLST / NG-STAR / NG-MAST allele databases from PubMLST and ngstar.canada.ca.
-    Only needs to run once; results are cached in PYNGOST_DB_DIR.
+    Download MLST / NG-STAR / NG-MAST allele and profile databases from
+    PubMLST and ngstar.canada.ca, integrating NG-STAR clonal complexes
+    (bundled with the pyngoST project itself, no live CC endpoint exists)
+    so -c/--ngstarccs works. Written directly to PYNGOST_DB_DIR.
     """
     os.makedirs(PYNGOST_DB_DIR, exist_ok=True)
     script = _script_path()
+
+    ccs_path = os.path.join(PYNGOST_DB_DIR, "NG-STAR_CCs.csv")
+    urllib.request.urlretrieve(NGSTAR_CCS_URL, ccs_path)
+
+    already_downloaded = bool(glob.glob(os.path.join(PYNGOST_DB_DIR, "*.fas")))
+    if already_downloaded:
+        cmd = [sys.executable, script, "-u", "-p", PYNGOST_DB_DIR, "-cc", ccs_path]
+    else:
+        cmd = [sys.executable, script, "-d", "-n", PYNGOST_DB_DIR, "-cc", ccs_path]
+
     proc = subprocess.run(
-        [sys.executable, script, "-d", "-n", PYNGOST_DB_DIR],
+        cmd,
         cwd=os.path.dirname(script),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -43,6 +68,9 @@ def download_pyngost_db() -> str:
     )
     if not glob.glob(os.path.join(PYNGOST_DB_DIR, "*.fas")):
         raise RuntimeError(f"Database download failed:\n{proc.stdout[-2000:]}")
+
+    if not is_ngstar_cc_ready():
+        raise RuntimeError(f"NG-STAR CC integration failed:\n{proc.stdout[-2000:]}")
     return PYNGOST_DB_DIR
 
 
@@ -51,7 +79,7 @@ def run_typing(genome_paths: list[str], run_dir: str) -> dict[str, dict]:
     Run MLST + NG-STAR + NG-MAST multi-scheme typing on assembled FASTA files.
 
     Returns:
-        {sample_stem: {mlst_st, ngstar_st, ngstar_cc, mosaic_pena, ngmast_st, ngmast_genogroup}}
+        {sample_stem: {mlst_st, ngstar_st, ngstar_cc, mosaic_pena, ngmast_st}}
 
     Keys match the FASTA file stems passed in genome_paths.
     """
@@ -66,13 +94,23 @@ def run_typing(genome_paths: list[str], run_dir: str) -> dict[str, dict]:
     out_file = "typing_results.tsv"
     script = _script_path()
 
+    in_dir = os.path.join(run_dir, "pyngost_in")
+    os.makedirs(in_dir, exist_ok=True)
+    fasta_paths = []
+    for p in genome_paths:
+        if p.endswith(".fasta"):
+            fasta_paths.append(p)
+        else:
+            dest = os.path.join(in_dir, Path(p).stem + ".fasta")
+            shutil.copy2(p, dest)
+            fasta_paths.append(dest)
+
     cmd = [
         sys.executable, script,
-        "-i", *genome_paths,
+        "-i", *fasta_paths,
         "-s", "NG-STAR,MLST,NG-MAST",
-        "-g",       # NG-MAST genogroups
-        "-c",       # NG-STAR clonal complexes
-        "-m",       # mosaic/semimosaic penA detection
+        "-c",
+        "-m",
         "-p", PYNGOST_DB_DIR,
         "-q", out_dir,
         "-o", out_file,
@@ -98,11 +136,10 @@ def run_typing(genome_paths: list[str], run_dir: str) -> dict[str, dict]:
             strain = row.get("strain", "")
             stem = Path(strain).stem or strain
             results[stem] = {
-                "mlst_st":          row.get("MLST", "-"),
-                "ngstar_st":        row.get("NG-STAR", "-"),
-                "ngstar_cc":        row.get("NG-STAR_CC", "-"),
-                "mosaic_pena":      row.get("penA_mosaic_type", "-"),
-                "ngmast_st":        row.get("NG-MAST", "-"),
-                "ngmast_genogroup": row.get("Genogroup", "-"),
+                "mlst_st":     row.get("MLST", "-"),
+                "ngstar_st":   row.get("NG-STAR", "-"),
+                "ngstar_cc":   row.get("NG-STAR_CC", "-"),
+                "mosaic_pena": row.get("penA_mosaic_type", "-"),
+                "ngmast_st":   row.get("NG-MAST", "-"),
             }
     return results

@@ -28,16 +28,28 @@ def _migrate(con: sqlite3.Connection) -> None:
         ("assembly_results", "assembly_qc_status",       "TEXT"),
         ("assembly_results", "assembly_qc_flags",        "TEXT"),
         ("assembly_results", "plasmid_contigs_path",     "TEXT"),
+        ("assembly_results", "core_genes_found",         "INTEGER"),
+        ("assembly_results", "core_genes_total",         "INTEGER"),
+        ("assembly_results", "misassembled_contigs",     "INTEGER"),
+        ("assembly_results", "n90",                      "INTEGER"),
+        ("assembly_results", "l50",                      "INTEGER"),
+        ("assembly_results", "l90",                      "INTEGER"),
+        ("assembly_results", "auN",                      "REAL"),
+        ("assembly_results", "n_per_100kbp",              "REAL"),
+        ("assembly_results", "avg_contig_len",            "REAL"),
         ("amr_results",      "ngstar_st",                "TEXT"),
         ("amr_results",      "ngstar_alleles",           "TEXT"),
         ("amr_results",      "ngstar_novel",             "INTEGER"),
         ("amr_results",      "ngstar_incomplete",        "INTEGER"),
+        ("amr_results",      "ngmast_st",                "TEXT"),
+        ("amr_results",      "ngmast_alleles",           "TEXT"),
+        ("amr_results",      "ngmast_novel",             "INTEGER"),
+        ("amr_results",      "ngmast_incomplete",        "INTEGER"),
         ("amr_results",      "resistance_category",      "TEXT"),
         ("amr_results",      "n_resistance_classes",     "INTEGER"),
         ("amr_results",      "essential_gene_mutations",  "TEXT"),
         ("amr_results",      "essential_gene_synonymous", "TEXT"),
         ("phylogeny_runs",   "cgmlst_results",           "TEXT"),
-        ("phylogeny_runs",   "snp_clusters",             "TEXT"),
     ]
     for table, col, typ in new_cols:
         try:
@@ -124,6 +136,10 @@ def init_project(project_name: str) -> None:
                 ngstar_alleles       TEXT,
                 ngstar_novel         INTEGER,
                 ngstar_incomplete    INTEGER,
+                ngmast_st            TEXT,
+                ngmast_alleles       TEXT,
+                ngmast_novel         INTEGER,
+                ngmast_incomplete    INTEGER,
                 resistance_category  TEXT,
                 n_resistance_classes INTEGER,
                 ran_at               TEXT
@@ -219,20 +235,20 @@ def save_assembly(project_name: str, sample_id: str, contigs_path: str, stats) -
         con.execute("""
             INSERT OR REPLACE INTO assembly_results
                 (sample_id, contigs_path,
-                 n_contigs, total_len, n50,
+                 n_contigs, total_len, n50, n90, l50, l90, auN,
+                 n_per_100kbp, avg_contig_len,
                  largest, gc_pct, completeness, contigs_500,
-                 misassemblies, duplication_ratio, nga50,
-                 mismatches_per_100kbp, indels_per_100kbp,
+                 core_genes_found, core_genes_total,
                  assembly_qc_status, assembly_qc_flags, ran_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             sample_id, contigs_path,
             _d.get("n_contigs"), _d.get("total_len"), _d.get("n50"),
+            _d.get("n90"), _d.get("l50"), _d.get("l90"), _d.get("auN"),
+            _d.get("n_per_100kbp"), _d.get("avg_contig_len"),
             _d.get("largest"), _d.get("gc_pct"),
             _d.get("completeness"), _d.get("contigs_500"),
-            _d.get("misassemblies"), _d.get("duplication_ratio"),
-            _d.get("nga50"), _d.get("mismatches_per_100kbp"),
-            _d.get("indels_per_100kbp"),
+            _d.get("core_genes_found"), _d.get("core_genes_total"),
             qc.get("status"), json.dumps(qc.get("flags", [])),
             now,
         ))
@@ -243,6 +259,7 @@ def save_amr(project_name: str, sample_id: str, amr_result) -> None:
     mlst   = amr_result.mlst
     mos    = amr_result.mosaic_pena
     ngstar = amr_result.ngstar
+    ngmast = amr_result.ngmast
     with _conn(project_name) as con:
         con.execute("""
             INSERT INTO samples (sample_id, added_at, has_amr)
@@ -257,9 +274,10 @@ def save_amr(project_name: str, sample_id: str, amr_result) -> None:
                  mosaic_pena_class, mosaic_pena_identity,
                  mosaic_pena_coverage, mosaic_suspected,
                  ngstar_st, ngstar_alleles, ngstar_novel, ngstar_incomplete,
+                 ngmast_st, ngmast_alleles, ngmast_novel, ngmast_incomplete,
                  resistance_category, n_resistance_classes,
                  essential_gene_mutations, essential_gene_synonymous, ran_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             sample_id,
             amr_result.failure_probability,
@@ -277,6 +295,10 @@ def save_amr(project_name: str, sample_id: str, amr_result) -> None:
             json.dumps(ngstar.get("alleles", {})),
             1 if ngstar.get("novel") else 0,
             1 if ngstar.get("incomplete") else 0,
+            ngmast.get("ST") if not ngmast.get("error") else None,
+            json.dumps(ngmast.get("alleles", {})),
+            1 if ngmast.get("novel") else 0,
+            1 if ngmast.get("incomplete") else 0,
             amr_result.resistance_category,
             amr_result.n_resistance_classes,
             json.dumps(amr_result.essential_gene_mutations or {}),
@@ -291,15 +313,41 @@ def delete_amr(project_name: str) -> None:
         con.execute("UPDATE samples SET has_amr = 0")
 
 
+def delete_qc(project_name: str) -> None:
+    with _conn(project_name) as con:
+        con.execute("DELETE FROM qc_results")
+        con.execute("UPDATE samples SET has_qc = 0")
+
+
+def delete_assembly(project_name: str) -> None:
+    with _conn(project_name) as con:
+        con.execute("DELETE FROM assembly_results")
+        con.execute("UPDATE samples SET has_assembly = 0")
+
+
+def delete_alerts(project_name: str) -> None:
+    with _conn(project_name) as con:
+        con.execute("DELETE FROM alerts")
+
+
+def delete_samples(project_name: str) -> None:
+    with _conn(project_name) as con:
+        con.execute("DELETE FROM samples")
+
+
+def delete_phylogeny(project_name: str) -> None:
+    with _conn(project_name) as con:
+        con.execute("DELETE FROM phylogeny_runs")
+
+
 def save_phylogeny(project_name: str, phy_out: dict) -> None:
     cgmlst = phy_out.get("cgmlst_result")
-    snp    = phy_out.get("snp_clusters")
     with _conn(project_name) as con:
         con.execute("""
             INSERT OR REPLACE INTO phylogeny_runs
                 (run_id, created_at, tree_path, matrix_path, n_samples,
-                 cluster_report, cgmlst_results, snp_clusters)
-            VALUES (?,?,?,?,?,?,?,?)
+                 cluster_report, cgmlst_results)
+            VALUES (?,?,?,?,?,?,?)
         """, (
             phy_out.get("run_id"),
             _now(),
@@ -308,7 +356,6 @@ def save_phylogeny(project_name: str, phy_out: dict) -> None:
             phy_out.get("n_samples"),
             json.dumps(phy_out.get("cluster_report", {})),
             json.dumps(cgmlst) if cgmlst else None,
-            json.dumps(snp)    if snp    else None,
         ))
 
 
@@ -347,25 +394,30 @@ def load_project(project_name: str) -> dict:
                     },
                     "multiqc": row["multiqc_path"],
                 }
+                samples[sid]["qc_ran_at"] = row["ran_at"]
 
         for row in con.execute("SELECT * FROM assembly_results"):
             sid = row["sample_id"]
             if sid in samples:
+                samples[sid]["assembly_ran_at"] = row["ran_at"]
                 samples[sid]["assembly"] = {
                     "contigs_path": row["contigs_path"],
                     "stats": {
                         "n_contigs":             row["n_contigs"],
                         "total_len":             row["total_len"],
                         "n50":                   row["n50"],
+                        "n90":                   row["n90"],
+                        "l50":                   row["l50"],
+                        "l90":                   row["l90"],
+                        "auN":                   row["auN"],
+                        "n_per_100kbp":          row["n_per_100kbp"],
+                        "avg_contig_len":        row["avg_contig_len"],
                         "largest":               row["largest"],
                         "gc_pct":                row["gc_pct"],
                         "completeness":          row["completeness"],
                         "contigs_500":           row["contigs_500"],
-                        "misassemblies":         row["misassemblies"],
-                        "duplication_ratio":     row["duplication_ratio"],
-                        "nga50":                 row["nga50"],
-                        "mismatches_per_100kbp": row["mismatches_per_100kbp"],
-                        "indels_per_100kbp":     row["indels_per_100kbp"],
+                        "core_genes_found":      row["core_genes_found"],
+                        "core_genes_total":      row["core_genes_total"],
                         "qc": {
                             "status": row["assembly_qc_status"],
                             "flags":  json.loads(row["assembly_qc_flags"] or "[]"),
@@ -376,6 +428,7 @@ def load_project(project_name: str) -> dict:
         for row in con.execute("SELECT * FROM amr_results"):
             sid = row["sample_id"]
             if sid in samples:
+                samples[sid]["amr_ran_at"] = row["ran_at"]
                 from .models import AMRResult as _AMRResult
                 samples[sid]["amr"] = _AMRResult.from_dict({
                     "failure_probability":  row["failure_probability"],
@@ -401,6 +454,12 @@ def load_project(project_name: str) -> dict:
                         "novel":      bool(row["ngstar_novel"]),
                         "incomplete": bool(row["ngstar_incomplete"]),
                     },
+                    "ngmast": {
+                        "ST":         row["ngmast_st"],
+                        "alleles":    json.loads(row["ngmast_alleles"] or "{}"),
+                        "novel":      bool(row["ngmast_novel"]),
+                        "incomplete": bool(row["ngmast_incomplete"]),
+                    },
                     "essential_gene_mutations":  json.loads(row["essential_gene_mutations"] or "{}"),
                     "essential_gene_synonymous": json.loads(row["essential_gene_synonymous"] or "{}"),
                 }, sample_id=sid)
@@ -411,7 +470,6 @@ def load_project(project_name: str) -> dict:
         ).fetchone()
         if row:
             _cgmlst_raw = row["cgmlst_results"] if "cgmlst_results" in row.keys() else None
-            _snp_raw    = row["snp_clusters"]    if "snp_clusters"    in row.keys() else None
             phylogeny = {
                 "run_id":         row["run_id"],
                 "created_at":     row["created_at"],
@@ -420,7 +478,6 @@ def load_project(project_name: str) -> dict:
                 "n_samples":      row["n_samples"],
                 "cluster_report": json.loads(row["cluster_report"] or "{}"),
                 "cgmlst_result":  json.loads(_cgmlst_raw) if _cgmlst_raw else None,
-                "snp_clusters":   json.loads(_snp_raw)    if _snp_raw    else None,
             }
 
     return {"samples": samples, "phylogeny": phylogeny}

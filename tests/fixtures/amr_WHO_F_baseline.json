@@ -120,7 +120,7 @@
   "plasmid": {
     "aac-aph": "error",
     "blaTEM-1": "error",
-    "blatem-135": "error",
+    "blaTEM-135": "error",
     "ereA": "error",
     "ereB": "error",
     "ermA": "error",
@@ -128,8 +128,7 @@
     "ermC": "error",
     "ermF": "error",
     "mef": "error",
-    "tet-M": "error",
-    "tet-O": "error"
+    "tet-M": "error"
   },
   "cdc_phenotypes": [
     "wildtype"

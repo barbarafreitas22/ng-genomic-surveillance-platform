@@ -106,11 +106,11 @@ def _process_single_sample(project_name: str, sample_id: str, r1: Path, r2) -> d
             "logs":         asm.logs,
         }
         if asm.contigs:
-            from backend.phylogeny.cgmlst import core_genome_completeness
+            from backend.phylogeny.cgmlst import core_genome_gene_count
             try:
-                core_genome_completeness(str(asm.contigs), str(Path(asm.contigs).parent))
+                core_genome_gene_count(str(asm.contigs))
             except Exception:
-                pass
+                logger.exception("Assembly | %s | core genome completeness check failed", sample_id)
             result["contigs_path"] = asm.contigs
             result["_contig_stats"] = _parse_contigs_stats(asm.contigs)
             logger.info("Pipeline | %s | assembly OK", sample_id)
@@ -149,11 +149,11 @@ def _process_single_fasta_sample(project_name: str, sample_id: str, fasta_path: 
     except Exception as e:
         qc_out = {"error": str(e)}
 
-    from backend.phylogeny.cgmlst import core_genome_completeness
+    from backend.phylogeny.cgmlst import core_genome_gene_count
     try:
-        core_genome_completeness(str(fasta_path), str(fasta_path.parent))
+        core_genome_gene_count(str(fasta_path))
     except Exception:
-        pass
+        logger.exception("Assembly | %s | core genome completeness check failed", sample_id)
     stats = _parse_contigs_stats(fasta_path)
     stats_dict = stats.to_dict() if stats else {}
     save_assembly(project_name, sample_id, str(fasta_path), stats_dict)
@@ -193,8 +193,18 @@ def run_full_pipeline(
     on_sample_done=None,
 ) -> dict:
     """
-    Run QC → Assembly → AMR → Phylogeny for FASTQ samples.
-    For pre-assembled FASTA inputs, skip QC/Assembly and run AMR directly.
+    Main entry point for the Full Pipeline: QC -> Assembly -> AMR ->
+    Phylogeny for FASTQ samples. Pre-assembled FASTA inputs skip
+    Assembly.
+
+    Args:
+        project_name: project to save results under.
+        input_paths: uploaded FASTQ/FASTA files for the batch.
+        on_sample_done: optional callback(sample_id, sample_result) fired
+            as each sample finishes, for progress reporting.
+
+    Returns:
+        dict with one sub-dict per stage: qc, assembly, amr, phylogeny.
     """
     init_project(project_name)
     results: dict = {"qc": {}, "assembly": {}, "amr": {}, "phylogeny": {}}
@@ -235,6 +245,8 @@ def run_full_pipeline(
                 results["amr"][sample_id] = sr["amr"]
                 if sr.get("qc"):
                     results["qc"][sample_id] = sr["qc"]
+                if sr.get("assembly"):
+                    results["assembly"][sample_id] = sr["assembly"]
                 if not sr.get("excluded"):
                     assembled_contigs[sample_id] = sr["contigs_path"]
                 if on_sample_done is not None:
@@ -323,7 +335,6 @@ def run_full_pipeline(
                 "upload_names":   phy.get("upload_names", []),
                 "n_samples":      len(contig_list),
                 "cgmlst_result":  phy.get("cgmlst_result"),
-                "snp_clusters":   phy.get("snp_clusters"),
             }
             save_phylogeny(project_name, {
                 "run_id":         phy["run_id"],
@@ -332,7 +343,6 @@ def run_full_pipeline(
                 "n_samples":      len(contig_list),
                 "cluster_report": phy.get("cluster_report", {}),
                 "cgmlst_result":  phy.get("cgmlst_result"),
-                "snp_clusters":   phy.get("snp_clusters"),
             })
         except Exception as e:
             results["phylogeny"] = {"error": str(e), "tree_path": None}

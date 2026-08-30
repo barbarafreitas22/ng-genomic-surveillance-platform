@@ -19,15 +19,25 @@ try:
 except ImportError:
     _psutil = None
 
-from ..paths import CGMLST_SCHEMA_DIR as SCHEMA_DIR
+import configparser as _configparser
+
+from ..paths import (
+    CGMLST_SCHEMA_DIR as SCHEMA_DIR,
+    CONFIG_PATH, CORE_GENOME_FASTA, RESULTS_DIR,
+)
 
 _PUBMLST_BASE  = "https://rest.pubmlst.org/db/pubmlst_neisseria_seqdef"
 _NG_CGMLST_V1  = 62
 
-TRANSMISSION_THRESHOLD = 7
 GENOGROUP_THRESHOLD    = 400
 
 PROFILE_CACHE_DIR = SCHEMA_DIR / "profile_cache"
+
+_config = _configparser.ConfigParser()
+_config.read(CONFIG_PATH)
+BLASTN = _config["PATHS"].get("BLASTN", "blastn")
+
+CORE_GENOME_CACHE_DIR = RESULTS_DIR / "core_genome_cache"
 
 
 def is_chewbbaca_available() -> bool:
@@ -110,8 +120,9 @@ def download_schema() -> None:
             "  conda install -c bioconda chewbbaca"
         )
 
-    SCHEMA_DIR.mkdir(parents=True, exist_ok=True)
-    loci_dir = SCHEMA_DIR / "loci_fasta"
+    source = SCHEMA_DIR
+    source.mkdir(parents=True, exist_ok=True)
+    loci_dir = source / "loci_fasta"
     loci_dir.mkdir(exist_ok=True)
 
     data = _pubmlst_get(f"schemes/{_NG_CGMLST_V1}/loci")
@@ -135,7 +146,7 @@ def download_schema() -> None:
             f"First failures: {failed[:5]}"
         )
 
-    prep_out = SCHEMA_DIR / "prep_out"
+    prep_out = source / "prep_out"
     if prep_out.exists():
         shutil.rmtree(prep_out)
 
@@ -159,7 +170,7 @@ def download_schema() -> None:
         )
 
     for item in prep_out.iterdir():
-        dst = SCHEMA_DIR / item.name
+        dst = source / item.name
         if item.is_dir():
             if dst.exists():
                 shutil.rmtree(dst)
@@ -168,13 +179,28 @@ def download_schema() -> None:
             shutil.copy2(item, dst)
 
     for hidden in prep_out.glob(".*"):
-        shutil.copy2(hidden, SCHEMA_DIR / hidden.name)
+        shutil.copy2(hidden, source / hidden.name)
 
     if not is_schema_ready():
         raise RuntimeError("Schema setup completed but not ready.")
 
 
 def run_allele_calling(assembly_paths: list[str], output_dir: str) -> dict[str, dict[str, int]]:
+    """
+    Call cgMLST alleles for a batch of assemblies via chewBBACA
+    AlleleCall against the PubMLST scheme (data/phylogeny/cgmlst_schema).
+    Results are cached per-genome by MD5, so re-running on an
+    already-typed genome skips chewBBACA entirely.
+
+    Args:
+        assembly_paths: paths to assembled genome FASTAs.
+        output_dir: scratch directory for chewBBACA's own output.
+
+    Returns:
+        {sample_stem: {locus: allele_id}}. allele_id is the chewBBACA
+        allele number, `1_000_000 + N` for an inferred novel allele
+        (INF-N), or 0 if the locus was not found/fragmented.
+    """
     PROFILE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
     cached_profiles: dict[str, dict[str, int]] = {}
@@ -229,8 +255,22 @@ def run_allele_calling(assembly_paths: list[str], output_dir: str) -> dict[str, 
                 return 1_000_000 + int(v[4:])
             return 0
 
+        # chewBBACA derives its own sample id by splitting the input filename
+        # at the FIRST dot (not Path.stem's last-dot rule), so a name like
+        # "GCA_021193625.2_ASM2119362v2_genomic.fna" comes back as just
+        # "GCA_021193625" in results_alleles.tsv. Map that back to the real
+        # stem so cgMLST cluster ids line up with the tree's leaf names.
+        _by_first_dot = {Path(p).name.split(".")[0]: Path(p).stem for p in uncached_paths}
+        _by_stem      = {Path(p).stem: Path(p).stem for p in uncached_paths}
+
         for sample in df.index:
-            sid = Path(str(sample)).stem
+            raw = str(sample)
+            sid = (
+                _by_first_dot.get(raw)
+                or _by_stem.get(raw)
+                or _by_first_dot.get(Path(raw).stem)
+                or Path(raw).stem
+            )
             profile = {locus: _to_int(df.loc[sample, locus]) for locus in df.columns}
             new_profiles[sid] = profile
 
@@ -246,40 +286,91 @@ def run_allele_calling(assembly_paths: list[str], output_dir: str) -> dict[str, 
     return {**cached_profiles, **new_profiles}
 
 
-def core_genome_completeness(assembly_path: str, output_dir: str) -> dict | None:
-    if not (is_chewbbaca_available() and is_schema_ready()):
+# Core genome analysis based on a already used Core genome
+def _core_genome_gene_total() -> int:
+    if not CORE_GENOME_FASTA.exists():
+        return 0
+    with open(CORE_GENOME_FASTA) as f:
+        return sum(1 for line in f if line.startswith(">"))
+
+
+def core_genome_gene_count(
+    assembly_path: str, min_pid: float = 90.0, min_cov: float = 0.80,
+) -> dict | None:
+    """
+    Alternative completeness metric against data/genes/core_genome.fasta
+    (a single-genome gene set, not a cgMLST allele scheme). Uses BLASTN
+    presence/absence by identity+coverage instead of allele calling,
+    since there's no multi-allele catalog to call against.
+
+    Returns:
+        dict with core_genes_found/total/core_completeness_pct, or None
+        if the reference file is missing.
+    """
+    if not CORE_GENOME_FASTA.exists():
         return None
-    try:
-        profiles = run_allele_calling([assembly_path], output_dir)
-    except Exception:
+
+    total = _core_genome_gene_total()
+    if not total:
         return None
-    profile = profiles.get(Path(assembly_path).stem)
-    if not profile:
+
+    CORE_GENOME_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cache_file = CORE_GENOME_CACHE_DIR / f"{_file_md5(assembly_path)}.json"
+    if cache_file.exists():
+        try:
+            return json.loads(cache_file.read_text())
+        except Exception:
+            pass
+
+    proc = subprocess.run(
+        [
+            BLASTN,
+            "-query",         str(CORE_GENOME_FASTA),
+            "-subject",       str(assembly_path),
+            "-outfmt",        "6 qseqid pident length qlen",
+            "-perc_identity", str(min_pid),
+            "-dust",          "no",
+        ],
+        capture_output=True, text=True, timeout=600,
+    )
+    if proc.returncode != 0:
         return None
-    total = len(profile)
-    found = sum(1 for v in profile.values() if v != 0)
-    return {
+
+    best_cov: dict[str, float] = {}
+    for line in proc.stdout.strip().splitlines():
+        parts = line.split("\t")
+        if len(parts) < 4:
+            continue
+        qid, length, qlen = parts[0], parts[2], parts[3]
+        try:
+            cov = int(length) / int(qlen)
+        except (ValueError, ZeroDivisionError):
+            continue
+        if cov > best_cov.get(qid, 0.0):
+            best_cov[qid] = cov
+
+    found = sum(1 for c in best_cov.values() if c >= min_cov)
+    result = {
         "core_genes_found": found,
         "core_genes_total": total,
         "core_completeness_pct": round(found / total * 100, 1) if total else 0.0,
     }
+    try:
+        cache_file.write_text(json.dumps(result))
+    except Exception:
+        pass
+    return result
 
 
-def cached_core_genome_completeness(assembly_path: str) -> dict | None:
-    cache_file = PROFILE_CACHE_DIR / f"{_file_md5(assembly_path)}.json"
+def cached_core_genome_gene_count(assembly_path: str) -> dict | None:
+    """Read-only lookup for core_genome_gene_count's cache, does not run BLASTN."""
+    cache_file = CORE_GENOME_CACHE_DIR / f"{_file_md5(assembly_path)}.json"
     if not cache_file.exists():
         return None
     try:
-        profile = json.loads(cache_file.read_text())
+        return json.loads(cache_file.read_text())
     except Exception:
         return None
-    total = len(profile)
-    found = sum(1 for v in profile.values() if v != 0)
-    return {
-        "core_genes_found": found,
-        "core_genes_total": total,
-        "core_completeness_pct": round(found / total * 100, 1) if total else 0.0,
-    }
 
 
 def _core_loci(profiles: dict, min_presence: float = 0.95) -> list[str]:
@@ -299,6 +390,12 @@ def compute_distance_matrix(
     profiles: dict[str, dict[str, int]],
     loci: list[str] | None = None,
 ) -> pd.DataFrame:
+    """
+    Pairwise allelic distance matrix (Hamming, over the given loci).
+    A locus is only compared between two samples if both have a call
+    (non-zero); missing loci are excluded from that pair rather than
+    counted as a difference.
+    """
     samples = list(profiles.keys())
     if not samples:
         return pd.DataFrame()
@@ -322,6 +419,14 @@ def compute_distance_matrix(
 
 
 def cluster_at_threshold(dist_matrix: pd.DataFrame, threshold: int) -> dict[str, int]:
+    """
+    Single-linkage clustering at a fixed distance threshold. Two samples
+    end up in the same cluster if connected by a chain of pairwise
+    distances each <= threshold, even if their own distance is larger.
+
+    Returns:
+        {sample: cluster_id}.
+    """
     samples = list(dist_matrix.index)
     if len(samples) == 0:
         return {}
@@ -335,6 +440,18 @@ def cluster_at_threshold(dist_matrix: pd.DataFrame, threshold: int) -> dict[str,
 
 
 def run_cgmlst_clustering(assembly_paths: list[str], output_dir: str) -> dict:
+    """
+    Genogroup clustering for a batch of assemblies: allele-call with
+    chewBBACA, restrict to loci present in >=95% of the batch
+    (_core_loci), then single-linkage cluster the allelic distance
+    matrix at GENOGROUP_THRESHOLD (400 AD, the same criterion
+    Pathogenwatch uses for N. gonorrhoeae genomic clusters).
+
+    Returns:
+        dict with sample_stats (per-sample loci found/% assigned/
+        genogroup), genogroup_clusters, pairwise distances, and the
+        path to the exported distance matrix CSV.
+    """
     profiles = run_allele_calling(assembly_paths, output_dir)
     if not profiles:
         raise RuntimeError("No allele profiles produced.")
@@ -351,7 +468,6 @@ def run_cgmlst_clustering(assembly_paths: list[str], output_dir: str) -> dict:
     matrix_csv = str(Path(output_dir) / "cgmlst_distances.csv")
     dist.to_csv(matrix_csv)
 
-    outbreak  = cluster_at_threshold(dist, TRANSMISSION_THRESHOLD)
     genogroup = cluster_at_threshold(dist, GENOGROUP_THRESHOLD)
 
     sample_stats: dict = {}
@@ -362,7 +478,6 @@ def run_cgmlst_clustering(assembly_paths: list[str], output_dir: str) -> dict:
             "loci_assigned":    assigned,
             "loci_total":       len(core),
             "pct_assigned":     pct,
-            "outbreak_cluster": outbreak.get(sid),
             "genogroup":        genogroup.get(sid),
         }
 
@@ -375,14 +490,12 @@ def run_cgmlst_clustering(assembly_paths: list[str], output_dir: str) -> dict:
                 "sample_a":       a,
                 "sample_b":       b,
                 "allele_diff":    d,
-                "outbreak_link":  d <= TRANSMISSION_THRESHOLD,
                 "same_genogroup": d <= GENOGROUP_THRESHOLD,
             })
 
     return {
         "core_loci_count":    len(core),
         "sample_stats":       sample_stats,
-        "outbreak_clusters":  outbreak,
         "genogroup_clusters": genogroup,
         "pairwise":           pairs,
         "matrix_csv":         matrix_csv,

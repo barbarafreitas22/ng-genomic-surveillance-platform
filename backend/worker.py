@@ -35,6 +35,11 @@ def _available_memory_gb() -> float | None:
 
 
 def _run_job(job: dict) -> dict:
+    """
+    Dispatch one claimed job to its pipeline function (qc/qc_fasta/
+    assembly/amr/full_pipeline) by job_type, save the result to the
+    project DB, and return it for the caller to persist to the jobs table.
+    """
     from backend.db import init_project, save_qc, save_assembly, save_amr
 
     payload = json.loads(job["payload"])
@@ -60,17 +65,18 @@ def _run_job(job: dict) -> dict:
             r1=Path(payload["r1"]),
             r2=Path(payload["r2"]) if payload.get("r2") else None,
             pre_trimmed=payload.get("pre_trimmed", False),
+            keep_spades_output=payload.get("keep_spades_output", False),
         )
         result = {
             "contigs_path": str(asm.contigs) if asm.contigs else None,
             "logs": asm.logs,
         }
         if asm.contigs:
-            from backend.phylogeny.cgmlst import core_genome_completeness
+            from backend.phylogeny.cgmlst import core_genome_gene_count
             try:
-                core_genome_completeness(str(asm.contigs), str(Path(asm.contigs).parent))
+                core_genome_gene_count(str(asm.contigs))
             except Exception:
-                pass
+                log.exception("Assembly | %s | core genome completeness check failed", sid)
             stats = parse_contigs_stats(asm.contigs)
             save_assembly(project, sid, str(asm.contigs), stats)
         return result
@@ -90,30 +96,21 @@ def _run_job(job: dict) -> dict:
     if jtype == "qc_fasta":
         from backend.qc import run_qc_pipeline_fasta
         from backend.assembly import parse_contigs_stats
-        from backend.amr import run_amr_variant_calling
-        from backend.models import AMRResult
         fasta_path = Path(payload["fasta_path"])
 
         qc_result = run_qc_pipeline_fasta(sid, fasta_path, output_dir=payload.get("output_dir"))
         save_qc(project, sid, qc_result)
 
-        from backend.phylogeny.cgmlst import core_genome_completeness
+        from backend.phylogeny.cgmlst import core_genome_gene_count
         try:
-            core_genome_completeness(str(fasta_path), str(fasta_path.parent))
+            core_genome_gene_count(str(fasta_path))
         except Exception:
-            pass
+            log.exception("Assembly | %s | core genome completeness check failed", sid)
         stats = parse_contigs_stats(fasta_path)
         stats_dict = stats.to_dict() if stats else {}
         save_assembly(project, sid, str(fasta_path), stats_dict)
 
-        try:
-            amr_out = run_amr_variant_calling(sample_id=sid, contigs=fasta_path)
-            save_amr(project, sid, amr_out)
-            amr_dict = amr_out.to_dict() if isinstance(amr_out, AMRResult) else amr_out
-        except Exception as e:
-            amr_dict = {"error": str(e)}
-
-        return {"qc": qc_result, "assembly_stats": stats_dict, "amr": amr_dict}
+        return {"qc": qc_result, "assembly_stats": stats_dict}
 
     if jtype == "full_pipeline":
         from backend.full_pipeline import run_full_pipeline
@@ -149,6 +146,12 @@ def _run_and_finish(job: dict) -> None:
 
 
 def main() -> None:
+    """
+    ng-worker entry point. Polls the jobs table every POLL_INTERVAL
+    seconds, claims and runs up to MAX_THREADS jobs concurrently, and
+    self-throttles (skips claiming new jobs) when free memory drops
+    below MIN_FREE_GB. Runs until SIGTERM/SIGINT.
+    """
     from backend.db import claim_next_job, init_jobs_db
 
     init_jobs_db(recover=True)

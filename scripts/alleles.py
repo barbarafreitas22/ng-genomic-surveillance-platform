@@ -38,6 +38,11 @@ MLST_GENES = {
     "pgm":  "pgm",
 }
 
+NGMAST_GENES = {
+    "porB": "NG-MAST_porB",
+    "tbpB": "NG-MAST_tbpB",
+}
+
 
 def download_alleles(locus: str, out_path: Path, retries: int = 3) -> bool:
     url = f"{API_BASE}/loci/{locus}/alleles_fasta"
@@ -60,8 +65,10 @@ def download_alleles(locus: str, out_path: Path, retries: int = 3) -> bool:
 def main():
     ngstar_dir = PROJECT_ROOT / "data" / "genes" / "ngstar_alleles"
     mlst_dir   = PROJECT_ROOT / "data" / "genes" / "mlst_alleles"
+    ngmast_dir = PROJECT_ROOT / "data" / "genes" / "ngmast_alleles"
     ngstar_dir.mkdir(parents=True, exist_ok=True)
     mlst_dir.mkdir(parents=True, exist_ok=True)
+    ngmast_dir.mkdir(parents=True, exist_ok=True)
 
     log.info("=== NG-STAR alleles ===")
     ok = True
@@ -72,6 +79,11 @@ def main():
     log.info("=== MLST alleles ===")
     for gene, locus in MLST_GENES.items():
         ok &= download_alleles(locus, mlst_dir / f"{gene}.fasta")
+        time.sleep(0.5)
+
+    log.info("=== NG-MAST alleles ===")
+    for gene, locus in NGMAST_GENES.items():
+        ok &= download_alleles(locus, ngmast_dir / f"{gene}.fasta")
         time.sleep(0.5)
 
     if ok:

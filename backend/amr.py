@@ -114,11 +114,8 @@ CDC_RULES = {
     "parE_T451I": "fluoroquinolone_minor_parE",
     "parE_T451S": "fluoroquinolone_minor_parE",
 
-    "gyrB_G447V": "fluoroquinolone_minor_gyrB",
-    "gyrB_D429N": "fluoroquinolone_minor_gyrB",
-    "gyrB_A508V": "fluoroquinolone_minor_gyrB",
-    "gyrB_K450T": "fluoroquinolone_minor_gyrB",
-    "gyrB_E466D": "fluoroquinolone_minor_gyrB",
+    "gyrB_D429N": "zoliflodacin_reduced_susceptibility",
+    "gyrB_K450T": "zoliflodacin_reduced_susceptibility",
 
     "gyrA_A67P": "ciprofloxacin_resistant",
     "gyrA_S91F": "ciprofloxacin_resistant",
@@ -156,35 +153,17 @@ CDC_RULES = {
 
     "rpsJ_V57M": "tetracycline_chromosomal_resistance",
 
-    "folP_ins166": "sulfonamide_resistance",
-    "folP_ins167": "sulfonamide_resistance",
-    "folP_ins168": "sulfonamide_resistance",
-    "folP_ins169": "sulfonamide_resistance",
-    "folP_ins170": "sulfonamide_resistance",
-    "folP_ins171": "sulfonamide_resistance",
-    "folP_ins172": "sulfonamide_resistance",
-    "folP_F31L":  "sulfonamide_resistance",
-    "folP_G190D": "sulfonamide_resistance",
-    "folP_G190R": "sulfonamide_resistance",
-    "folP_P192S": "sulfonamide_resistance",
     "folP_R228S": "sulfonamide_resistance",
 
-    "rplD_K51E": "moderate_azithromycin_resistance",
-    "rplD_Q66H": "moderate_azithromycin_resistance",
-    "rplD_Q66K": "moderate_azithromycin_resistance",
     "rplD_G68D": "moderate_azithromycin_resistance",
     "rplD_G68C": "moderate_azithromycin_resistance",
     "rplD_G70D": "moderate_azithromycin_resistance",
 
     "rpsE_T24P":   "spectinomycin_resistance",
-    "rpsE_delV25": "spectinomycin_resistance",
-    "rpsE_delK26": "spectinomycin_resistance",
     "rpsE_delK25": "spectinomycin_resistance",
     "rpsE_delV26": "spectinomycin_resistance",
     "rpsE_delV27": "spectinomycin_resistance",
     "rpsE_K28E":   "spectinomycin_resistance",
-    "rpsE_C192R":  "spectinomycin_resistance",
-    "rpsE_W197L":  "spectinomycin_resistance",
 
     "ponA_L421P": "reduced_penicillin_susceptibility",
 
@@ -240,9 +219,8 @@ _MTRR_EFFLUX_KEYS: frozenset[str] = frozenset({
     "mtrD_mosaic_ambiguous_present",
 })
 
-# Genes where any premature stop codon confers a known phenotype.
 _TRUNCATION_RULES = {
-    "mtrR": "efflux_pump_overexpression",  # loss of repressor, mtrCDE overexpression
+    "mtrR": "efflux_pump_overexpression",
 }
 
 AMR_TIER: dict[str, int] = {
@@ -262,7 +240,7 @@ AMR_TIER: dict[str, int] = {
     "ermA": 1, "ermB": 1, "ermC": 1, "ermF": 1,
     "ereA": 1, "ereB": 1, "mef": 1,
     "aac-aph": 1,
-    "gyrB_G447V": 3, "gyrB_D429N": 3, "gyrB_A508V": 3, "gyrB_K450T": 3, "gyrB_E466D": 3,
+    "gyrB_D429N": 3, "gyrB_K450T": 3,
     "parE_G410V": 3, "parE_D420N": 3, "parE_L445H": 3, "parE_T451I": 3, "parE_T451S": 3,
     "norM_promoter_mut": 3,
 }
@@ -293,7 +271,7 @@ _PHENOTYPE_TO_CLASS: dict[str, str] = {
     "ciprofloxacin_resistant":             "fluoroquinolone",
     "ciprofloxacin_intermediate_parC":     "fluoroquinolone",
     "fluoroquinolone_minor_parE":          "fluoroquinolone",
-    "fluoroquinolone_minor_gyrB":          "fluoroquinolone",
+    "zoliflodacin_reduced_susceptibility": "zoliflodacin",
     "tetracycline_resistance":             "tetracycline",
     "tetracycline_chromosomal_resistance": "tetracycline",
     "sulfonamide_resistance":              "sulfonamide",
@@ -303,6 +281,7 @@ _PHENOTYPE_TO_CLASS: dict[str, str] = {
     "efflux_tetracycline_contribution":    "tetracycline",
     "macrolide_efflux_upregulation":       "azithromycin",
     "norM_efflux_upregulation":            "fluoroquinolone",
+    "penA_allele_likely_mosaic":           "beta_lactam",
 }
 
 _HIGH_IMPACT = frozenset({
@@ -322,13 +301,14 @@ _MODERATE_IMPACT = frozenset({
     "moderate_azithromycin_resistance",
     "aminoglycoside_resistance",
     "reduced_penicillin_susceptibility",
+    "penA_allele_likely_mosaic",
 })
 
 _LOW_IMPACT = frozenset({
     "efflux_pump_overexpression",
     "efflux_tetracycline_contribution",
+    "macrolide_efflux_upregulation",
     "reduced_beta_lactam_susceptibility",
-    "fluoroquinolone_minor_gyrB",
     "fluoroquinolone_minor_parE",
     "norM_efflux_upregulation",
 })
@@ -369,9 +349,10 @@ def classify_resistance_category(phenotypes: list) -> str:
     Assign a clinical resistance category from the detected phenotypes.
 
     Priority, highest is first:
-      MDR              — ≥2 antibiotic classes affected
-      high_resistance  — ≥1 high-impact phenotype (ceftriaxone, HLAzithro)
-      moderate_resistance — ≥1 moderate-impact phenotype
+      XDR              — ceftriaxone + azithromycin + >=2 more classes (_is_xdr_pattern)
+      MDR              — >=2 antibiotic classes affected
+      high_resistance  — >=1 high-impact phenotype (ceftriaxone, HLAzithro)
+      moderate_resistance — >=1 moderate-impact phenotype
       low_resistance   — only minor mechanisms (efflux, reduced susceptibility)
       susceptible      — no resistance
     """
@@ -379,6 +360,8 @@ def classify_resistance_category(phenotypes: list) -> str:
     if not pheno_set or pheno_set == {"wildtype"}:
         return "susceptible"
 
+    if _is_xdr_pattern(phenotypes):
+        return "XDR"
     n_classes = count_resistance_classes(phenotypes)
     if n_classes >= 2:
         return "MDR"
@@ -417,6 +400,10 @@ def match_who_strain(phenotypes: list) -> list[dict]:
     Compare detected phenotypes against WHO reference strain profiles.
     A match is reported when the sample's resistance classes fully cover the
     WHO strain's defining classes (sample may be equally or more resistant).
+    WHO F (pansusceptible, no defining classes) only matches when the sample
+    itself has no detected classes, an empty set is trivially a subset of
+    any set, so this needs an exact-match check rather than the subset
+    check used for every other (non-empty) strain profile.
     Returns matches sorted by severity: XDR first, then MDR.
     """
     detected_classes = {
@@ -425,9 +412,8 @@ def match_who_strain(phenotypes: list) -> list[dict]:
     matches = []
     for strain, profile in WHO_STRAIN_PROFILES.items():
         required = profile["resistance_classes"]
-        if not required:
-            continue
-        if required.issubset(detected_classes):
+        matched = required.issubset(detected_classes) if required else not detected_classes
+        if matched:
             matches.append({
                 "strain":          strain,
                 "mdr_class":       profile["mdr_class"],
@@ -440,7 +426,7 @@ def match_who_strain(phenotypes: list) -> list[dict]:
 
 # Clinical impact tier per mutation, derived from the same CDC_RULES phenotype
 # mapping and _HIGH_IMPACT/_MODERATE_IMPACT/_LOW_IMPACT classification used for
-# resistance-category scoring (see estimate_failure_probability). No standalone
+# resistance-category scoring (see resistance_severity_score). No standalone
 # numeric weights: replaces the earlier per-mutation FAILURE_WEIGHTS table, whose
 # individual decimal values (e.g. penA_A501P=0.55 vs penA_G545S=0.20) had no
 # literature source beyond the coarse tier a mutation already belongs to.
@@ -550,9 +536,9 @@ THERAPY_RULES = {
         "recommend": ["ceftriaxone 1g IM + azithromycin 2g orally (single dose — monitor MIC)"],
         "alternatives": _STD_ALTERNATIVES,
     },
-    "fluoroquinolone_minor_gyrB": {
+    "penA_allele_likely_mosaic": {
         "avoid": [],
-        "recommend": ["ceftriaxone 1g IM + azithromycin 2g orally (single dose — gyrB minor contributor; significant only with gyrA mutations)"],
+        "recommend": ["ceftriaxone 1g IM + azithromycin 2g orally (single dose — mosaic penA pattern, monitor MIC)"],
         "alternatives": _STD_ALTERNATIVES,
     },
     "fluoroquinolone_minor_parE": {
@@ -759,6 +745,8 @@ def parse_vcf(vcf_path: Path, ref_gene: Path = None) -> tuple[list, list]:
                 mut_str = f"ins{codon_num}"
                 if _at_known_pos(mut_str):
                     mutations.append(mut_str)
+            elif gene_name in _TRUNCATION_RULES and "disrupted" not in mutations:
+                mutations.append("disrupted")
             continue
 
         if is_deletion and not is_rna:
@@ -782,6 +770,8 @@ def parse_vcf(vcf_path: Path, ref_gene: Path = None) -> tuple[list, list]:
                     mut_str = f"del{ref_aas[0]}{first_codon_0 + 1}_{ref_aas[-1]}{last}"
                     if _at_known_pos(mut_str):
                         mutations.append(mut_str)
+            elif gene_name in _TRUNCATION_RULES and "disrupted" not in mutations:
+                mutations.append("disrupted")
 
     if is_rna:
         _rna_allowed = _RNA_GENE_POSITIONS.get(ref_gene.stem) if ref_gene else None
@@ -834,6 +824,19 @@ def parse_vcf(vcf_path: Path, ref_gene: Path = None) -> tuple[list, list]:
 
 
 def infer_cdc_phenotype(chrom_mutations: dict, plasmid_results: dict = None):
+    """
+    Map detected mutations/plasmid genes to CDC phenotype labels via
+    CDC_RULES. Also raises the mosaic-penA flag when enough individual
+    mosaic-associated mutations co-occur (>= _PENA_MOSAIC_ALLELE_THRESHOLD).
+
+    Args:
+        chrom_mutations: {gene: [mutation, ...]} from variant calling.
+        plasmid_results: {gene: "present"/"absent"}, optional.
+
+    Returns:
+        List of CDC phenotype strings (deduplicated), or ["wildtype"]
+        if nothing matched.
+    """
     phenotypes = []
     mosaic_hits: list[str] = []
 
@@ -844,11 +847,13 @@ def infer_cdc_phenotype(chrom_mutations: dict, plasmid_results: dict = None):
                 phenotypes.append(CDC_RULES[key])
                 if key in _MTRR_EFFLUX_KEYS:
                     phenotypes.append("efflux_tetracycline_contribution")
+                    phenotypes.append("macrolide_efflux_upregulation")
                 if key in _PENA_MOSAIC_ASSOCIATED:
                     mosaic_hits.append(key)
-            elif m.endswith("*") and gene in _TRUNCATION_RULES:
+            elif (m.endswith("*") or m == "disrupted") and gene in _TRUNCATION_RULES:
                 phenotypes.append(_TRUNCATION_RULES[gene])
                 phenotypes.append("efflux_tetracycline_contribution")
+                phenotypes.append("macrolide_efflux_upregulation")
 
     for gene, status in (plasmid_results or {}).items():
         if status == "present" and gene in PLASMID_CDC_RULES:
@@ -868,8 +873,8 @@ _RESISTANCE_SCORE_BY_CATEGORY = {
     "moderate_resistance": 0.4,
     "high_resistance":     0.6,
     "MDR":                 0.8,
+    "XDR":                 1.0,
 }
-_XDR_SCORE = 1.0
 
 
 def _is_xdr_pattern(phenotypes: list) -> bool:
@@ -879,10 +884,22 @@ def _is_xdr_pattern(phenotypes: list) -> bool:
     return len(classes - _LASTLINE_CLASSES) >= 2
 
 
-def estimate_failure_probability(chrom_mutations: dict, plasmid_results: dict = None):
+def resistance_severity_score(chrom_mutations: dict, plasmid_results: dict = None):
+    """
+    Ordinal severity score (0.0-1.0) for a sample's resistance category.
+    Not a calibrated probability, the 0.2 spacing between categories is
+    an internal ranking convention (see documentation.py for the
+    literature support behind the category boundaries themselves).
+
+    Args:
+        chrom_mutations: {gene: [mutation, ...]} from variant calling.
+        plasmid_results: {gene: "present"/"absent"}, optional.
+
+    Returns:
+        float score: 0.0 susceptible, 0.2 low, 0.4 moderate, 0.6 high,
+        0.8 MDR, 1.0 XDR (ceftriaxone + azithromycin + >=2 more classes).
+    """
     phenotypes = infer_cdc_phenotype(chrom_mutations, plasmid_results)
-    if _is_xdr_pattern(phenotypes):
-        return _XDR_SCORE
     category = classify_resistance_category(phenotypes)
     return _RESISTANCE_SCORE_BY_CATEGORY.get(category, 0.0)
 
@@ -902,6 +919,8 @@ def recommend_therapy(phenotypes: list):
         "sulfonamide_resistance",
         "spectinomycin_resistance",
         "moderate_azithromycin_resistance",
+        "penA_allele_likely_mosaic",
+        "reduced_beta_lactam_susceptibility",
         "efflux_pump_overexpression",
     ]
     for p in priority:
@@ -1078,6 +1097,20 @@ _MTRR_PROMOTER_MOSAIC_THRESHOLDS: dict[str, tuple[float, float]] = {
 
 
 def detect_mtr_mosaics(contigs: Path) -> dict:
+    """
+    Detect mtrR-promoter/mtrD mosaic alleles by whole-sequence
+    identity/coverage match (BLASTN), not point-mutation calling, these
+    alleles arise from inter-species recombination, so a single
+    positional SNP-caller can't represent them as one clean variant.
+
+    Args:
+        contigs: path to the assembled genome FASTA.
+
+    Returns:
+        {variant_name: bool}, one entry per known mosaic reference
+        sequence found in data/genes/chromosomal (thresholds per
+        variant match Pathogenwatch's own reference set).
+    """
     gene_dir = GENE_DB_CROM
 
     targets: list[tuple[str, float, float]] = (
@@ -1287,6 +1320,22 @@ def _apply_efflux_promoters(contigs: Path, chromosomal: dict) -> dict:
 
 
 def run_amr_variant_calling(sample_id: str, contigs: Path):
+    """
+    Main AMR entry point for Module 2. Screens an assembly for
+    chromosomal mutations and plasmid genes (Minimap2 + BCFtools),
+    applies the mosaic/indel/promoter special-case detectors, maps the
+    result to CDC phenotypes and a resistance category/score, and adds
+    MLST, NG-STAR and mosaic-penA typing.
+
+    Args:
+        sample_id: sample identifier, used for the output directory.
+        contigs: path to the assembled genome FASTA.
+
+    Returns:
+        An AMRResult with chromosomal/plasmid findings, cdc_phenotypes,
+        resistance_category, failure_probability (severity score),
+        therapy recommendation, and typing (mlst/ngstar/mosaic_pena).
+    """
     outdir = PROJECT_ROOT / "results" / "amr" / sample_id
     ensure_dir(outdir)
     logger.info("AMR | %s | start", sample_id)
@@ -1310,15 +1359,16 @@ def run_amr_variant_calling(sample_id: str, contigs: Path):
     }
 
     cdc_pheno    = infer_cdc_phenotype(chromosomal, plasmid)
-    failure_prob = estimate_failure_probability(chromosomal, plasmid)
+    failure_prob = resistance_severity_score(chromosomal, plasmid)
 
     _mlst: dict = {}
     _mosaic_pena: dict = {}
     _ngstar: dict = {}
+    _ngmast: dict = {}
 
     try:
         from backend.mlst import run_mlst
-        _mlst = run_mlst(contigs, minimap2=MINIMAP2)
+        _mlst = run_mlst(contigs)
     except Exception as e:
         _mlst = {"error": str(e), "st": None, "alleles": {}}
 
@@ -1329,9 +1379,15 @@ def run_amr_variant_calling(sample_id: str, contigs: Path):
 
     try:
         from backend.ngstar import run_ngstar
-        _ngstar = run_ngstar(contigs, minimap2=MINIMAP2)
+        _ngstar = run_ngstar(contigs)
     except Exception as e:
         _ngstar = {"error": str(e), "ST": None, "alleles": {}}
+
+    try:
+        from backend.ngmast import run_ngmast
+        _ngmast = run_ngmast(contigs)
+    except Exception as e:
+        _ngmast = {"error": str(e), "ST": None, "alleles": {}}
 
     try:
         _essential = run_essential_gene_scan(sample_id, contigs)
@@ -1357,6 +1413,7 @@ def run_amr_variant_calling(sample_id: str, contigs: Path):
         mlst=_mlst,
         mosaic_pena=_mosaic_pena,
         ngstar=_ngstar,
+        ngmast=_ngmast,
         essential_gene_mutations=_essential["nonsynonymous"],
         essential_gene_synonymous=_essential["synonymous"],
     )

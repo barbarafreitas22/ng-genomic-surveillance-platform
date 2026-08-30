@@ -1,0 +1,10 @@
+NEIS2101_1: sense(Extra in frame stop codon 'TAG' found.),antisense(First codon 'TTA' is not a start codon),revsense(First codon 'AAT' is not a start codon),revantisense(First codon 'TAC' is not a start codon)
+NEIS1181_1: sense(Extra in frame stop codon 'TGA' found.),antisense(First codon 'TTA' is not a start codon),revsense(First codon 'AAT' is not a start codon),revantisense(First codon 'TAC' is not a start codon)
+NEIS0913_1: sense(Extra in frame stop codon 'TAA' found.),antisense(First codon 'TTA' is not a start codon),revsense(First codon 'AAT' is not a start codon),revantisense(First codon 'CAC' is not a start codon)
+NEIS0202_1: sequence length is not a multiple of 3
+NEIS1147_1: sense(Extra in frame stop codon 'TGA' found.),antisense(First codon 'TCA' is not a start codon),revsense(First codon 'AGT' is not a start codon),revantisense(First codon 'TAC' is not a start codon)
+NEIS0436_1: sequence length is not a multiple of 3
+NEIS1929_1: sequence length is not a multiple of 3
+NEIS2362_1: sequence length is not a multiple of 3
+NEIS1334_1: sense(Extra in frame stop codon 'TGA' found.),antisense(First codon 'TTA' is not a start codon),revsense(First codon 'AAT' is not a start codon),revantisense(First codon 'TAC' is not a start codon)
+NEIS1236_1: sequence length is not a multiple of 3

@@ -13,10 +13,17 @@ _PUBMLST_COLUMNS = ["NG_penA", "'mtrR", "NG_porB", "NG_ponA", "NG_gyrA", "NG_par
 _PROFILES_CACHE = NGSTAR_PROFILES_CACHE
 
 
-def run_ngstar(contigs: Path, minimap2: str = "minimap2") -> dict:
+def run_ngstar(contigs: Path) -> dict:
     """
-    Run NG-STAR typing on an assembly.
-    BLASTs the whole assembly directly against local allele FASTAs.
+    NG-STAR AMR sequence typing (7 genes: penA, mtrR, porB, ponA, gyrA,
+    parC, 23SrRNA) against the local PubMLST allele set.
+
+    Args:
+        contigs: path to the assembled genome FASTA.
+
+    Returns:
+        dict with ST (NG-STAR sequence type), alleles, and an
+        incomplete/novel-allele flag.
     """
     alleles = {gene: query_locus_local(gene, contigs, ALLELE_DIR) for gene in NGSTAR_GENES}
 

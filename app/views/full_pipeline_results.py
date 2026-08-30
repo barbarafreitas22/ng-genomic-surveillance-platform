@@ -1,27 +1,22 @@
 from __future__ import annotations
-import json
-import os
-import re
-import tempfile
-import time
-import base64
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Optional
 
-import altair as alt
 import pandas as pd
 import streamlit as st
 
 from views.shared import *
 from views.shared import (
-    _load_project_cached, _resistance_color,
-    _render_cohort_amr_profile, _render_genome_overview,
-    _render_essential_gene_markers,
+    _load_project_cached,
+    _render_cohort_amr_profile, _render_amr_tree_highlight,
+    _render_essential_gene_markers, _render_cgmlst_clustering,
+    _render_drug_matrix,
 )
 
 
-def _render_d3_tree(tree_path: str, clusters: dict, upload_names: list, legend_title: str, height: int = 950) -> None:
+def _render_d3_tree(
+    tree_path: str, clusters: dict, upload_names: list, legend_title: str,
+    height: int = 950, resistance: dict | None = None,
+) -> None:
     from backend.phylogeny.viewer import load_tree_newick, newick_to_tree_json
     from backend.phylogeny.run_phylogeny import _load_backbone_metadata
     import json as _json
@@ -32,14 +27,14 @@ def _render_d3_tree(tree_path: str, clusters: dict, upload_names: list, legend_t
     _backbone_meta = _load_backbone_metadata()
     _tree_json_str = _json.dumps(newick_to_tree_json(
         _newick, clusters=clusters,
-        upload_names=upload_names, backbone_meta=_backbone_meta,
+        upload_names=upload_names, backbone_meta=_backbone_meta, resistance=resistance,
     ))
     _html = f"""<!DOCTYPE html>
 <html>
 <head>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <style>
-  body {{ margin: 0; background: white; font-family: Arial, sans-serif; overflow-x: hidden; }}
+  body {{ margin: 0; background: white; font-family: Arial, sans-serif; overflow-x: auto; }}
   .branch {{ fill: none; stroke: #444; stroke-width: 1px; }}
   .leaf-label {{ font-size: 11px; fill: #111; dominant-baseline: middle; }}
   #legend {{
@@ -78,7 +73,9 @@ def _render_d3_tree(tree_path: str, clusters: dict, upload_names: list, legend_t
 <svg id="tree"></svg>
 <script>
 const data = {_tree_json_str};
-const margin = {{ top: 20, right: 460, bottom: 30, left: 50 }};
+const labelWidth = 280;
+const annotationWidth = 100;
+const margin = {{ top: 20, right: labelWidth + annotationWidth, bottom: 30, left: 50 }};
 const W = (window.innerWidth || 900);
 const root = d3.hierarchy(data);
 const nLeaves = root.leaves().length;
@@ -113,45 +110,58 @@ sbG.append('text').attr('x', scaleBarLen / 2).attr('y', 14)
     .attr('text-anchor', 'middle').attr('font-size', '10px').attr('fill', '#666')
     .text(scaleBarVal);
 
-const clusterMap = {{}};
-root.leaves().forEach(l => {{
-    const c = l.data.cluster;
-    if (c && c !== '') {{ if (!clusterMap[c]) clusterMap[c] = []; clusterMap[c].push(l); }}
-}});
-const shadowPalette = [
-    'rgba(147,197,253,0.30)', 'rgba(249,168,212,0.30)',
-    'rgba(134,239,172,0.30)', 'rgba(253,224,132,0.30)',
-    'rgba(196,181,253,0.30)', 'rgba(103,232,249,0.30)',
-    'rgba(254,202,202,0.30)', 'rgba(167,243,208,0.30)',
-];
-let ci = 0;
-Object.entries(clusterMap).filter(([, ls]) => ls.length >= 2).sort(([a],[b]) => +a - +b)
-    .forEach(([c, ls]) => {{
-        const xs = ls.map(l => l.x);
-        const yMin = Math.min(...xs) - rowH * 0.6;
-        const yMax = Math.max(...xs) + rowH * 0.6;
-        const col = shadowPalette[ci++ % shadowPalette.length];
-        g.append('rect').attr('x', 0).attr('y', yMin)
-            .attr('width', treeW + 10).attr('height', yMax - yMin)
-            .attr('rx', 8).attr('fill', col);
-        const lx = treeW + 240, ly = (yMin + yMax) / 2, lh = 22;
-        g.append('rect').attr('x', lx - 8).attr('y', ly - lh/2)
-            .attr('width', 110).attr('height', lh).attr('rx', 5)
-            .attr('fill', col.replace('0.30','0.70')).attr('stroke', col.replace('0.30','0.90'))
-            .attr('stroke-width', 1);
-        g.append('text').attr('x', lx).attr('y', ly).attr('dominant-baseline', 'middle')
-            .attr('font-size', '12px').attr('font-weight', '700').attr('fill', '#1f2937')
-            .text('Cluster ' + c);
-    }});
 g.selectAll('.branch').data(root.links()).join('path').attr('class', 'branch')
     .attr('d', d => `M${{d.source.y}},${{d.source.x}}L${{d.source.y}},${{d.target.x}}L${{d.target.y}},${{d.target.x}}`);
 g.selectAll('.inode').data(root.descendants().filter(d => d.children)).join('circle')
     .attr('cx', d => d.y).attr('cy', d => d.x).attr('r', 2).attr('fill', '#aaa');
 const leaves = g.selectAll('.leaf').data(root.leaves()).join('g')
     .attr('class', 'leaf').attr('transform', d => `translate(${{d.y}},${{d.x}})`);
-leaves.append('circle').attr('r', 5).attr('fill', d => d.data.color)
-    .attr('stroke', d => d.data.type === 'leaf_upload' ? '#333' : 'none').attr('stroke-width', 1.5);
+const resColor = {{ resistant: '#dc2626', susceptible: '#cbd5e1', no_data: '#e5e7eb' }};
+leaves.append('circle')
+    .attr('r', d => d.data.resistance === 'resistant' ? 8 : (d.data.resistance ? 4 : 5))
+    .attr('fill', d => d.data.resistance ? (resColor[d.data.resistance] || d.data.color) : d.data.color)
+    .attr('stroke', d => d.data.resistance === 'resistant' ? '#7f1d1d'
+        : (d.data.type === 'leaf_upload' ? '#333' : 'none'))
+    .attr('stroke-width', d => d.data.resistance === 'resistant' ? 2 : 1.5)
+    .attr('opacity', d => (d.data.resistance && d.data.resistance !== 'resistant') ? 0.45 : 1);
 leaves.append('text').attr('class', 'leaf-label').attr('x', 9).text(d => d.data.name);
+
+const clusterIds = Array.from(new Set(root.leaves().map(l => l.data.cluster).filter(c => c && c !== ''))).sort((a, b) => +a - +b);
+const clusterColors = {{}};
+clusterIds.forEach((c, i) => {{ clusterColors[c] = d3.hsl((i * 360 / clusterIds.length) % 360, 0.55, 0.6).formatHex(); }});
+const stripX = treeW + labelWidth;
+g.selectAll('.cluster-strip')
+    .data(root.leaves().filter(l => l.data.cluster && l.data.cluster !== ''))
+    .join('rect')
+    .attr('class', 'cluster-strip')
+    .attr('x', stripX)
+    .attr('y', d => d.x - 7)
+    .attr('width', 14)
+    .attr('height', 14)
+    .attr('rx', 3)
+    .attr('fill', d => clusterColors[d.data.cluster])
+    .append('title')
+    .text(d => 'Cluster ' + d.data.cluster);
+g.selectAll('.cluster-num')
+    .data(root.leaves().filter(l => l.data.cluster && l.data.cluster !== ''))
+    .join('text')
+    .attr('class', 'cluster-num')
+    .attr('x', stripX + 19)
+    .attr('y', d => d.x)
+    .attr('dominant-baseline', 'middle')
+    .attr('font-size', '10px')
+    .attr('fill', '#374151')
+    .text(d => d.data.cluster);
+if (clusterIds.length) {{
+    g.append('text')
+        .attr('x', stripX + 7)
+        .attr('y', -8)
+        .attr('text-anchor', 'middle')
+        .attr('font-size', '11px')
+        .attr('font-weight', '700')
+        .attr('fill', '#374151')
+        .text('Cluster');
+}}
 
 // Click handler — show metadata panel for any leaf
 leaves.style('cursor', 'pointer').on('click', function(event, d) {{
@@ -200,6 +210,32 @@ root.leaves().forEach(n => {{
         legend.appendChild(row);
     }}
 }});
+if (clusterIds.length) {{
+    const sepC = document.createElement('div');
+    sepC.style.cssText = 'border-top:1px solid #ddd;margin:6px 0;';
+    legend.appendChild(sepC);
+    clusterIds.forEach(c => {{
+        const row = document.createElement('div');
+        row.className = 'legend-row';
+        row.innerHTML = `<span class="legend-dot" style="background:${{clusterColors[c]}};border-radius:3px;"></span>Cluster ${{c}}`;
+        legend.appendChild(row);
+    }});
+}}
+const resistanceSeen = new Set();
+root.leaves().forEach(n => {{ if (n.data.resistance) resistanceSeen.add(n.data.resistance); }});
+if (resistanceSeen.size) {{
+    const resLabels = {{ resistant: 'Resistant', susceptible: 'Susceptible', no_data: 'No AMR data' }};
+    const sep = document.createElement('div');
+    sep.style.cssText = 'border-top:1px solid #ddd;margin:6px 0;';
+    legend.appendChild(sep);
+    ['resistant', 'susceptible', 'no_data'].forEach(k => {{
+        if (!resistanceSeen.has(k)) return;
+        const row = document.createElement('div');
+        row.className = 'legend-row';
+        row.innerHTML = `<span class="legend-dot" style="background:${{resColor[k]}}"></span>${{resLabels[k]}}`;
+        legend.appendChild(row);
+    }});
+}}
 </script>
 </body>
 </html>"""
@@ -207,7 +243,7 @@ root.leaves().forEach(n => {{
 
 
 def render() -> None:
-    _hdr_col, _report_col, _share_col = st.columns([3, 1, 1])
+    _hdr_col, _report_col = st.columns([3, 1])
     with _hdr_col:
         st.markdown("""
 <div style="padding:0.6rem 0 0.2rem 0;">
@@ -245,49 +281,19 @@ def render() -> None:
             except Exception as _rep_err:
                 st.caption(f"Report error: {_rep_err}")
 
-    if _active_proj:
-        with _share_col:
-            st.markdown("<div style='padding-top:0.55rem'></div>", unsafe_allow_html=True)
-            if st.button("Share results", use_container_width=True):
-                st.session_state["_show_share"] = not st.session_state.get("_show_share", False)
+            if st.button("Delete all results", key="del_fpr_btn", use_container_width=True):
+                from backend.db import (
+                    delete_qc as _delete_qc, delete_assembly as _delete_assembly,
+                    delete_amr as _delete_amr, delete_phylogeny as _delete_phylogeny,
+                )
+                _delete_qc(_active_proj)
+                _delete_assembly(_active_proj)
+                _delete_amr(_active_proj)
+                _delete_phylogeny(_active_proj)
+                _clear_project_results()
+                _load_project_cached.clear()
+                st.rerun()
 
-        if st.session_state.get("_show_share"):
-            _safe_proj = _active_proj.replace("'", "\\'")
-            st.components.v1.html(f"""
-<div style="display:flex;gap:8px;align-items:center;padding:2px 0 10px 0;">
-  <input id="ng-share-url" type="text" value="Generating link…"
-    style="flex:1;padding:8px 14px;border:1.5px solid #e5e7eb;border-radius:10px;
-           font-size:0.82rem;font-family:'Courier New',monospace;background:#f9fafb;
-           color:#111;outline:none;"
-    readonly onclick="this.select()">
-  <button id="ng-copy-btn"
-    onclick="navigator.clipboard.writeText(document.getElementById('ng-share-url').value)
-             .then(()=>{{var b=document.getElementById('ng-copy-btn');b.textContent='✓ Copied!';
-               b.style.background='#16a34a';setTimeout(()=>{{b.textContent='Copy link';b.style.background='#1d4ed8';}},2000)}})
-             .catch(()=>{{document.getElementById('ng-share-url').select();document.execCommand('copy');}})"
-    style="padding:8px 18px;background:#1d4ed8;color:white;border:none;border-radius:10px;
-           cursor:pointer;font-size:0.82rem;font-weight:600;white-space:nowrap;transition:background .2s;">
-    Copy link
-  </button>
-</div>
-<div style="font-size:0.7rem;color:#6b7280;margin-top:-4px;padding-bottom:4px;">
-  Anyone with access to this server can open this link and view these results directly.
-</div>
-<script>
-(function() {{
-  try {{
-    var url = new URL(window.location.href);
-    url.searchParams.set('project', '{_safe_proj}');
-    url.searchParams.set('page', 'results');
-    document.getElementById('ng-share-url').value = url.toString();
-  }} catch(e) {{
-    document.getElementById('ng-share-url').value = window.location.origin + '/?project={_safe_proj}&page=results';
-  }}
-}})();
-</script>
-""", height=80)
-
-   
     if db and _active_proj:
         try:
             from backend.alerts import detect_alerts as _detect_alerts
@@ -351,17 +357,35 @@ def render() -> None:
         except Exception:
             pass
 
-    #  Genomic overview 
+    if any(_fpr_meta.get(_sid) and any(_fpr_meta[_sid].values()) for _sid in _fpr_sids):
+        st.markdown("""
+<div style="margin:1.2rem 0 0.8rem 0;padding-bottom:0.55rem;border-bottom:2px solid #e2e8f0;">
+  <div style="font-size:1.05rem;font-weight:700;color:#0f172a;">Metadata Overview</div>
+</div>
+""", unsafe_allow_html=True)
+        render_metadata_charts(_fpr_meta, _fpr_sids, project_name=_active_proj)
+
+    #  Genomic overview
     st.markdown("""
 <div style="margin:1.2rem 0 0.8rem 0;padding-bottom:0.55rem;border-bottom:2px solid #e2e8f0;">
   <div style="font-size:1.05rem;font-weight:700;color:#0f172a;">Genomic Overview</div>
 </div>
 """, unsafe_allow_html=True)
+    _fpr_any_reads_qc = any(
+        not _fpr.get("qc", {}).get(_sid, {}).get("error")
+        and _fpr.get("qc", {}).get(_sid, {}).get("metrics", {}).get("total_reads")
+        for _sid in _fpr_sids
+    )
+    _fpr_has_metadata = any(
+        _fpr_meta.get(_sid) and any(_fpr_meta[_sid].values()) for _sid in _fpr_sids
+    )
+
     _ov_rows = []
     for _sid in _fpr_sids:
         _qr = _fpr.get("qc", {}).get(_sid, {})
         _ar = _fpr.get("assembly", {}).get(_sid, {})
         _mr = _fpr.get("amr", {}).get(_sid, {})
+        _is_fasta = _qr.get("input_type") == "fasta"
 
         _m  = _qr.get("metrics", {}) if not _qr.get("error") else {}
         _k2 = _qr.get("kraken2", {}) if not _qr.get("error") else {}
@@ -370,7 +394,7 @@ def render() -> None:
 
         _ctg_path = _ar.get("contigs_path") if not _ar.get("error") else None
         _cst = parse_contigs_stats(_ctg_path) if _ctg_path else None
-        _asm_qc_icon = {"pass": "✅", "warn": "⚠️", "fail": "❌"}.get(
+        _asm_qc_icon = {"pass": "✅", "caution": "⚠️", "fail": "❌"}.get(
             _cst.qc_status if _cst is not None else None, "—"
         )
 
@@ -379,10 +403,12 @@ def render() -> None:
         _pheno  = "; ".join(c.replace("_", " ").capitalize() for c in _cdc if c != "wildtype") or "Wildtype"
         _mlst   = _mr.mlst if isinstance(_mr, AMRResult) else {}
         _ngstar = _mr.ngstar if isinstance(_mr, AMRResult) else {}
+        _ngmast = _mr.ngmast if isinstance(_mr, AMRResult) else {}
         _st_str     = f"ST-{_mlst['st']}"   if not _mlst.get("error")   and _mlst.get("st")  else "—"
         _ngstar_str = f"ST-{_ngstar['ST']}" if not _ngstar.get("error") and _ngstar.get("ST") else "—"
+        _ngmast_str = f"ST-{_ngmast['ST']}" if not _ngmast.get("error") and _ngmast.get("ST") else "—"
         _res_cat     = _mr.resistance_category if isinstance(_mr, AMRResult) else None
-        _res_cat_str = _res_cat.replace("_", " ").capitalize() if _res_cat else "—"
+        _res_cat_str = _RESISTANCE_CATEGORY_LABELS.get(_res_cat, _res_cat) if _res_cat else "—"
 
         _cov   = _m.get("mean_coverage")
         _b10x  = _m.get("pct_breadth_10x")
@@ -390,29 +416,34 @@ def render() -> None:
         _b10x_str = f"{_b10x:.1f}%" if _b10x is not None else "—"
 
         _smeta = _fpr_meta.get(_sid, {})
-        _ov_rows.append({
-            "Sample":               _sid,
-            "Date":                 _smeta.get("collection_date") or "—",
-            "Site":                 _smeta.get("anatomical_site") or "—",
-            "Location":             ", ".join(filter(None, [_smeta.get("city"), _smeta.get("country")])) or "—",
-            "Reads":                f"{_m['total_reads']:,}" if _m.get("total_reads") else "—",
-            "Coverage":             _cov_str,
-            "≥10×":                 _b10x_str,
-            "Species":              f"{_sp_icon} {_sp.replace('_',' ').capitalize()}" if _sp != "—" else "—",
-            "Assembly QC":          _asm_qc_icon,
-            "Assembly":             f"{_cst.total_len/1e6:.2f} Mb" if _cst is not None else "—",
-            "N50":                  f"{_cst.n50/1e3:.1f} kb" if _cst is not None else "—",
-            "Core genes %":         (
-                f"{_cst.completeness:.1f}% ({_cst.core_genes_found}/{_cst.core_genes_total})"
-                if _cst is not None and _cst.core_genes_found is not None
-                else (f"{_cst.completeness:.1f}%" if _cst is not None else "—")
-            ),
+        _ov_row = {"Sample": _sid}
+        if _fpr_has_metadata:
+            _ov_row["Date"]     = _smeta.get("collection_date") or "—"
+            _ov_row["Site"]     = _smeta.get("anatomical_site") or "—"
+            _ov_row["Location"] = ", ".join(filter(None, [_smeta.get("city"), _smeta.get("country")])) or "—"
+        if _fpr_any_reads_qc:
+            _ov_row["Reads"]    = f"{_m['total_reads']:,}" if _m.get("total_reads") else "—"
+            _ov_row["Coverage"] = _cov_str
+            _ov_row["≥10×"]     = _b10x_str
+        _ov_row["Species"] = f"{_sp_icon} {_sp.replace('_',' ').capitalize()}" if _sp != "—" else "—"
+        _ov_row["Core genes %"] = (
+            f"{_cst.completeness:.1f}% ({_cst.core_genes_found}/{_cst.core_genes_total})"
+            if _cst is not None and _cst.core_genes_found is not None
+            else (f"{_cst.completeness:.1f}%" if _cst is not None else "—")
+        )
+        if _fpr_any_reads_qc:
+            _ov_row["Assembly QC"] = "—" if _is_fasta else _asm_qc_icon
+            _ov_row["Assembly"]    = "—" if _is_fasta else (f"{_cst.total_len/1e6:.2f} Mb" if _cst is not None else "—")
+            _ov_row["N50"]         = "—" if _is_fasta else (f"{_cst.n50/1e3:.1f} kb" if _cst is not None else "—")
+        _ov_row.update({
             "ST (MLST)":            _st_str,
             "NG-STAR":              _ngstar_str,
+            "NG-MAST":              _ngmast_str,
             "Resistance category":  _res_cat_str,
             "AMR score":            f"{_prob*100:.1f}%" if _prob is not None else "—",
             "CDC phenotype":        _pheno,
         })
+        _ov_rows.append(_ov_row)
     _ov_event = st.dataframe(
         pd.DataFrame(_ov_rows),
         use_container_width=True,
@@ -480,26 +511,20 @@ def render() -> None:
                     mime="application/octet-stream",
                     key=f"fp_det_dl_{_sel_sid}",
                 )
-            _s_mqc = Path(_s_qr.get("multiqc", "") or "")
-            if _s_mqc.is_file():
-                st.download_button(
-                    "⬇ MultiQC report",
-                    data=_s_mqc.read_bytes(),
-                    file_name=f"{_sel_sid}_multiqc.html",
-                    mime="text/html",
-                    key=f"fp_mqc_det_{_sel_sid}",
-                )
 
         if isinstance(_s_mr, AMRResult):
             _det_mlst   = _s_mr.mlst
             _det_ngstar = _s_mr.ngstar
+            _det_ngmast = _s_mr.ngmast
             _det_st     = f"ST-{_det_mlst['st']}"   if not _det_mlst.get("error")   and _det_mlst.get("st")  else "—"
             _det_ng     = f"ST-{_det_ngstar['ST']}"  if not _det_ngstar.get("error") and _det_ngstar.get("ST") else "—"
-            _tc1, _tc2 = st.columns(2)
+            _det_nm     = f"ST-{_det_ngmast['ST']}"  if not _det_ngmast.get("error") and _det_ngmast.get("ST") else "—"
+            _tc1, _tc2, _tc3 = st.columns(3)
             _tc1.metric("MLST", _det_st)
             _tc2.metric("NG-STAR", _det_ng)
+            _tc3.metric("NG-MAST", _det_nm)
             st.markdown("**AMR Profile**")
-            render_amr_interpretation(_s_mr, sample_label=_sel_sid, contigs_path=_s_ctg)
+            render_amr_interpretation(_s_mr, sample_label=_sel_sid)
         elif isinstance(_s_mr, dict) and _s_mr.get("error"):
             st.error(f"AMR error: {_s_mr['error']}")
     else:
@@ -522,66 +547,11 @@ def render() -> None:
         _render_essential_gene_markers(_amr_valid)
 
         st.markdown("#### Clinical Interpretation")
-        for _sid, _res in _amr_valid.items():
-            _prob  = _res.failure_probability
-            _cdc   = _res.cdc_phenotypes
-            _ther  = _res.therapy
-            _mlst  = _res.mlst
-            _mos   = _res.mosaic_pena
-            _is_wt = _cdc == ["wildtype"]
+        _render_drug_matrix({sid: r.therapy for sid, r in _amr_valid.items()})
 
-            if _is_wt:
-                _sbg, _sc, _sb = "#f0fdf4", "#16a34a", "#bbf7d0"
-                _slabel, _sicon = "Wildtype — no resistance detected", "✅"
-            else:
-                _sbg, _sc = _resistance_color(_prob)
-                _sb = _sbg
-                _n_r = len([p for p in _cdc if p != "wildtype"])
-                _slabel = f"{_n_r} resistance mechanism(s) detected"
-                _sicon = "🔴" if _prob >= 0.4 else "🟡"
-
-            _st_s = f"ST-{_mlst['st']}" if not _mlst.get("error") and _mlst.get("st") else "—"
-            _mos_s = "Yes" if _mos.get("mosaic_suspected") else ("No" if _mos.get("identity") else "—")
-
-            with st.expander(
-                f"**{_sid}** — {_sicon} {_slabel} · Score {_prob*100:.1f}%",
-                expanded=len(_amr_valid) <= 3,
-            ):
-                st.caption(f"MLST: {_st_s}  ·  Mosaic penA: {_mos_s}  ·  European 2020 (IUSTI) guidelines")
-                _avoid = _ther.get("avoid", [])
-                _rec   = _ther.get("recommend", [])
-                _avoid_low_fp = [a.lower() for a in _avoid]
-                _rec_str_fp   = " ".join(_rec).lower()
-                _fp_drug_cards = ""
-                for _flabel, _fkey in [
-                    ("Ceftriaxone", "ceftriaxone"), ("Azithromycin", "azithromycin"),
-                    ("Gentamicin", "gentamicin"), ("Ciprofloxacin", "ciprofloxacin"),
-                    ("Penicillin", "penicillin"), ("Tetracycline", "tetracycline"),
-                    ("Doxycycline", "doxycycline"),
-                ]:
-                    if _fkey in _avoid_low_fp:
-                        _fbg, _fbrd, _ftxt, _ficon, _fsub = "#fef2f2", "#dc2626", "#991b1b", "✕", "Avoid"
-                    elif _fkey in _rec_str_fp:
-                        _fbg, _fbrd, _ftxt, _ficon, _fsub = "#f0fdf4", "#16a34a", "#15803d", "✓", "Recommended"
-                    else:
-                        _fbg, _fbrd, _ftxt, _ficon, _fsub = "#f9fafb", "#d1d5db", "#6b7280", "—", "Not indicated"
-                    _fp_drug_cards += (
-                        f'<div style="background:{_fbg};border:1.5px solid {_fbrd};border-radius:10px;'
-                        f'padding:0.7rem 0.8rem;text-align:center;min-width:90px;flex:1;">'
-                        f'<div style="font-size:1.1rem;font-weight:700;color:{_ftxt};">{_ficon}</div>'
-                        f'<div style="font-size:0.78rem;font-weight:700;color:{_ftxt};margin:0.15rem 0;">{_flabel}</div>'
-                        f'<div style="font-size:0.65rem;color:{_ftxt};opacity:0.8;">{_fsub}</div>'
-                        f'</div>'
-                    )
-                st.markdown(
-                    f'<div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-bottom:0.8rem;">{_fp_drug_cards}</div>',
-                    unsafe_allow_html=True,
-                )
-                _fp_ctg = (_fpr.get("assembly") or {}).get(_sid, {}).get("contigs_path")
-                _render_genome_overview(_fp_ctg or "", _res, _sid)
-
-        for _sid, _err in {s: r["error"] for s, r in _amr_data.items() if "error" in r}.items():
-            st.error(f"**{_sid}**: {_err}")
+        for _sid, r in _amr_data.items():
+            if isinstance(r, dict) and "error" in r:
+                st.error(f"**{_sid}**: {r['error']}")
         if _active_proj and db:
             _fp_cohort_amr = {
                 sid: d["amr"]
@@ -613,10 +583,14 @@ def render() -> None:
                 from collections import Counter as _Counter
                 _ctr = _Counter(_clusters.values())
                 _n_multi = sum(1 for v in _ctr.values() if v >= 2)
-                st.caption(f"NJ clusters (SKA2): {len(_ctr)} clusters · {_n_multi} with ≥2 members")
+                st.caption(f"cgMLST genogroup clusters: {len(_ctr)} clusters · {_n_multi} with ≥2 members")
             _upload_names = st.session_state.get("last_upload_names", [])
+            _fp_resistance = _render_amr_tree_highlight(_active_proj, _upload_names, "fpr_tree")
             try:
-                _render_d3_tree(_tree_path, _clusters, _upload_names, "NJ clusters (SKA2)")
+                _render_d3_tree(
+                    _tree_path, _clusters, _upload_names, "cgMLST genogroup clusters",
+                    resistance=_fp_resistance,
+                )
             except Exception as _te:
                 st.warning(f"Could not render tree: {_te}")
         else:
@@ -634,9 +608,10 @@ def render() -> None:
                 if _nn_info:
                     _parts = [_nn_info.get("country"), str(_nn_info.get("year", ""))]
                     _nn_origin = " · ".join(p for p in _parts if p and p != "None")
+                _cg_geo = _i.get("cgmlst", {}).get("genogroup")
                 _up_rows.append({
                     "Sample":            _n,
-                    "Cluster":           str(_i.get("cluster", "—")),
+                    "Cluster":           str(_cg_geo) if _cg_geo is not None else "—",
                     "Nearest neighbour": _nn_label,
                     "Origin":            _nn_origin or "—",
                     "Distance (SNPs)":   f"{_i.get('nn_distance', 0):.0f}",
@@ -718,6 +693,8 @@ def render() -> None:
                     "<div style='margin-top:4px'>" + "".join(_card_html_parts) + "</div>",
                     unsafe_allow_html=True,
                 )
+
+        _render_cgmlst_clustering(_phy.get("cgmlst_result"), key_prefix="fp_cg")
 
 
 
