@@ -1,0 +1,112 @@
+[33mcommit 7002565ddb3cf5caf5080e2e258bb31794cc39d4[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mdev[m[33m)[m
+Author: Barbara Freitas <barbarafreitas2229@gmail.com>
+Date:   Sun Aug 30 18:13:49 2026 +0100
+
+    add NG-MAST typing, restructure AMR profiling and update phylogeny
+
+ .gitattributes                                     |     14 [32m+[m
+ .gitignore                                         |      2 [31m-[m
+ README.md                                          |     73 [32m+[m[31m-[m
+ app/app.py                                         |     48 [32m+[m[31m-[m
+ app/auth.py                                        |     40 [31m-[m
+ app/logo.png                                       |    Bin [31m189013[m -> [32m163931[m bytes
+ app/requirements.txt                               |     24 [31m-[m
+ app/streamlit_app/.streamlit/config.toml           |      9 [31m-[m
+ app/users.yaml                                     |      6 [31m-[m
+ app/views/amr.py                                   |     81 [32m+[m[31m-[m
+ app/views/cr.py                                    |     97 [32m+[m[31m-[m
+ app/views/documentation.py                         |    345 [32m+[m[31m-[m
+ app/views/full_pipeline_results.py                 |    345 [32m+[m[31m-[m
+ app/views/homepage.py                              |    183 [32m+[m[31m-[m
+ app/views/phylogenetic.py                          |    598 [32m+[m[31m-[m
+ app/views/qc_assembly.py                           |    713 [32m+[m[31m-[m
+ app/views/sample_metadata.py                       |    157 [31m-[m
+ app/views/shared.py                                |   1276 [32m+[m[31m-[m
+ backend/alerts.py                                  |    159 [32m+[m[31m-[m
+ backend/amr.py                                     |    147 [32m+[m[31m-[m
+ backend/assembly.py                                |    441 [32m+[m[31m-[m
+ backend/build_synonymous_panel.py                  |      4 [32m+[m[31m-[m
+ backend/db.py                                      |     97 [32m+[m[31m-[m
+ backend/full_pipeline.py                           |     30 [32m+[m[31m-[m
+ backend/mlst.py                                    |     15 [32m+[m[31m-[m
+ backend/models.py                                  |     35 [32m+[m[31m-[m
+ backend/ngmast.py                                  |     50 [32m+[m
+ backend/ngstar.py                                  |     13 [32m+[m[31m-[m
+ backend/paths.py                                   |     25 [32m+[m[31m-[m
+ backend/phylogeny/cgmlst.py                        |    177 [32m+[m[31m-[m
+ backend/phylogeny/run_phylogeny.py                 |     97 [32m+[m[31m-[m
+ backend/phylogeny/run_pyngost.py                   |     65 [32m+[m[31m-[m
+ backend/phylogeny/viewer.py                        |     18 [32m+[m[31m-[m
+ backend/pubmlst_typing.py                          |      8 [32m+[m[31m-[m
+ backend/qc.py                                      |    539 [32m+[m[31m-[m
+ backend/report.py                                  |     48 [32m+[m[31m-[m
+ backend/worker.py                                  |     35 [32m+[m[31m-[m
+ config.ini                                         |      5 [32m+[m[31m-[m
+ data/genes/chromosomal/16SrRNA.fasta               |     48 [32m+[m[31m-[m
+ data/genes/chromosomal/23SrRNA.fasta               |     87 [32m+[m[31m-[m
+ data/genes/core_genome.fasta                       |  27863 [32m++++[m
+ data/genes/ngmast_alleles/porB.fasta               |  26490 [32m++++[m
+ data/genes/ngmast_alleles/tbpB.fasta               |   7090 [32m+[m
+ .../plasmid/{blatem-135.fasta => blaTEM-135.fasta} |      0
+ data/genes/plasmid/tet-O.fasta                     |     33 [31m-[m
+ data/kraken2_ng/hash.k2d                           |    Bin [31m22014568[m -> [32m81118384[m bytes
+ data/kraken2_ng/opts.k2d                           |    Bin [31m64[m -> [32m64[m bytes
+ data/kraken2_ng/taxo.k2d                           |    Bin [31m2201[m -> [32m3405[m bytes
+ data/phylogeny/cgmlst_schema/.genes_list           |    Bin [31m0[m -> [32m27865[m bytes
+ data/phylogeny/cgmlst_schema/.schema_config        |    Bin [31m0[m -> [32m308[m bytes
+ data/phylogeny/cgmlst_schema/NEIS0001.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0007.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0008.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0009.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0010.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0012.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0013.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0014.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0015.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0016.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0017.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0018.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0019.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0020.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0021.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0034.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0035.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0036.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0037.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0038.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0039.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0040.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0041.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0043.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0045.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0046.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0047.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0048.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0059.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0069.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0071.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0072.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0073.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0074.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0092.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0093.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0097.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0098.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0099.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0100.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0102.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0103.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0104.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0105.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0106.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0107.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0108.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0109.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0110.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0114.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0115.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0116.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0117.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0118.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema/NEIS0119.fasta        |      2 [32m+[m
+ data/phylogeny/cgmlst_schema
