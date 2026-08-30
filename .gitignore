@@ -166,3 +166,7 @@ data/phylogeny/*.skf
 *.ann
 *.amb
 *.sa
+
+data/phylogeny/pyngost_db/ST_alleles_AC.pkl
+
+data/kraken2_ng/hash.k2d
