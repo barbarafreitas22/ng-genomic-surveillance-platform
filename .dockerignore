@@ -9,7 +9,6 @@ test_genomes/
 uploads/
 tools/
 
-docker-compose*.yml
 .env*
 README.md
 
