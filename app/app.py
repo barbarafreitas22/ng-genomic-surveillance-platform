@@ -378,7 +378,7 @@ hr {
 """, unsafe_allow_html=True)
 
 from views.shared import (
-    read_config, CONFIG_PATH, db,
+    db,
     _load_project_cached, _rebuild_pipeline_results,
     ensure_result_page_state, init_directories,
 )
@@ -386,9 +386,6 @@ from views.shared import (
 ensure_result_page_state()
 init_directories()
 
-config = read_config(CONFIG_PATH)
-paths = config["PATHS"] if config.has_section("PATHS") else {}
-KRAKEN_DB_DEFAULT = paths.get("KRAKEN2_DB", "") if hasattr(paths, "get") else ""
 
 try:
     _qp_project = st.query_params.get("project")

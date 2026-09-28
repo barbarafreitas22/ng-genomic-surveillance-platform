@@ -167,16 +167,6 @@ def init_project(project_name: str) -> None:
                 cluster_report TEXT
             );
 
-            CREATE TABLE IF NOT EXISTS phenotypic_amr (
-                sample_id      TEXT NOT NULL,
-                antibiotic     TEXT NOT NULL,
-                mic_value      REAL,
-                halo_mm        REAL,
-                interpretation TEXT,
-                updated_at     TEXT,
-                PRIMARY KEY (sample_id, antibiotic)
-            );
-
             CREATE TABLE IF NOT EXISTS alerts (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
                 sample_id    TEXT NOT NULL,
@@ -539,52 +529,6 @@ def load_metadata(project_name: str) -> dict[str, dict]:
             return {}
 
 
-def save_phenotypic_amr(project_name: str, sample_id: str, rows: list[dict]) -> None:
-    now = _now()
-    with _conn(project_name) as con:
-        for row in rows:
-            ab = row.get("antibiotic")
-            if not ab:
-                continue
-            con.execute("""
-                INSERT INTO phenotypic_amr
-                    (sample_id, antibiotic, mic_value, halo_mm, interpretation, updated_at)
-                VALUES (?,?,?,?,?,?)
-                ON CONFLICT(sample_id, antibiotic) DO UPDATE SET
-                    mic_value      = excluded.mic_value,
-                    halo_mm        = excluded.halo_mm,
-                    interpretation = excluded.interpretation,
-                    updated_at     = excluded.updated_at
-            """, (
-                sample_id, ab,
-                row.get("mic_value") if row.get("mic_value") not in (None, "") else None,
-                row.get("halo_mm")   if row.get("halo_mm")   not in (None, "") else None,
-                row.get("interpretation") or None,
-                now,
-            ))
-
-
-def load_phenotypic_amr(project_name: str) -> dict[str, dict]:
-    db = _db_path(project_name)
-    if not db.exists():
-        return {}
-    with _conn(project_name) as con:
-        try:
-            result: dict = {}
-            for row in con.execute("SELECT * FROM phenotypic_amr"):
-                sid = row["sample_id"]
-                if sid not in result:
-                    result[sid] = {}
-                result[sid][row["antibiotic"]] = {
-                    "mic_value":      row["mic_value"],
-                    "halo_mm":        row["halo_mm"],
-                    "interpretation": row["interpretation"],
-                }
-            return result
-        except Exception:
-            return {}
-
-
 def save_alerts(project_name: str, alerts: list[dict]) -> None:
     if not alerts:
         return
@@ -617,19 +561,6 @@ def load_alerts(project_name: str, unread_only: bool = False) -> list[dict]:
             return []
 
 
-def count_unread_alerts(project_name: str) -> int:
-    db = _db_path(project_name)
-    if not db.exists():
-        return 0
-    try:
-        with _conn(project_name) as con:
-            return con.execute(
-                "SELECT COUNT(*) FROM alerts WHERE acknowledged=0"
-            ).fetchone()[0]
-    except Exception:
-        return 0
-
-
 def acknowledge_alerts(project_name: str, alert_ids: list[int] | None = None) -> None:
     with _conn(project_name) as con:
         if alert_ids is None:
@@ -648,33 +579,6 @@ def list_projects() -> list[str]:
         p.name for p in PROJECTS_DIR.iterdir()
         if p.is_dir() and (p / "project.db").exists()
     )
-
-
-def projects_summary() -> list[dict]:
-    rows = []
-    for name in list_projects():
-        try:
-            with _conn(name) as con:
-                n_qc  = con.execute("SELECT COUNT(*) FROM samples WHERE has_qc=1").fetchone()[0]
-                n_asm = con.execute("SELECT COUNT(*) FROM samples WHERE has_assembly=1").fetchone()[0]
-                n_amr = con.execute("SELECT COUNT(*) FROM samples WHERE has_amr=1").fetchone()[0]
-                phy   = con.execute(
-                    "SELECT n_samples, created_at FROM phylogeny_runs ORDER BY created_at DESC LIMIT 1"
-                ).fetchone()
-                rows.append({
-                    "Project":   name,
-                    "QC":        n_qc,
-                    "Assembly":  n_asm,
-                    "AMR":       n_amr,
-                    "Phylogeny": f"{phy['n_samples']} samples" if phy else "—",
-                    "Last tree": phy["created_at"][:10] if phy else "—",
-                })
-        except Exception:
-            rows.append({
-                "Project": name, "QC": 0, "Assembly": 0,
-                "AMR": 0, "Phylogeny": "—", "Last tree": "—",
-            })
-    return rows
 
 
 _JOBS_DB = PROJECTS_DIR / "jobs.db"
@@ -782,9 +686,3 @@ def get_project_jobs(project_name: str) -> list[dict]:
         return []
 
 
-def cancel_job(job_id: str) -> None:
-    with _jobs_conn() as con:
-        con.execute(
-            "UPDATE jobs SET status='error', error_msg='Cancelled by user' WHERE id=? AND status='queued'",
-            (job_id,),
-        )

@@ -202,20 +202,6 @@ def group_paired_end(files) -> dict[str, dict[str, Optional[object]]]:
     return samples
 
 
-def save_uploaded_file(uploaded_file, target_dir: Path = UPLOAD_DIR) -> Path:
-    ensure_dir(target_dir)
-    filename = sanitize_name(uploaded_file.name)
-    save_path = target_dir / filename
-    if save_path.exists():
-        stem = save_path.stem
-        suffix = "".join(save_path.suffixes)
-        counter = 1
-        while save_path.exists():
-            save_path = target_dir / f"{stem}_{counter}{suffix}"
-            counter += 1
-    return safe_write_bytes(save_path, uploaded_file.getbuffer())
-
-
 def save_temp_file(uploaded_file) -> Path:
     """Write an uploaded file to a OS-managed temp directory.
     The caller deletes it after use."""
@@ -263,77 +249,6 @@ def project_assembly_dir(project_name: str) -> Path:
     return project_results_dir(project_name) / "assembly"
 
 
-def project_amr_dir(project_name: str) -> Path:
-    return project_results_dir(project_name) / "amr"
-
-
-def project_phylogeny_dir(project_name: str) -> Path:
-    return project_results_dir(project_name) / "phylogeny"
-
-
-def load_results_metrics() -> tuple[int, int, int]:
-    qc_dir = RESULTS_BASE / "qc"
-    asm_dir = RESULTS_BASE / "assembly"
-    amr_dir = RESULTS_BASE / "amr"
-    return (
-        count_items(qc_dir),
-        count_items(asm_dir),
-        count_items(amr_dir),
-    )
-
-
-def collect_alerts() -> list[str]:
-    qc_dir = RESULTS_BASE / "qc"
-    amr_dir = RESULTS_BASE / "amr"
-    alerts: list[str] = []
-
-    for log in qc_dir.glob("*/logs.txt"):
-        txt = read_text_safely(log)
-        if "FAIL" in txt.upper() or "poor quality" in txt.lower():
-            alerts.append(f"Poor QC detected in **{log.parent.name}**")
-
-    for rep in qc_dir.glob("*/kraken2/kraken2_report.txt"):
-        txt = read_text_safely(rep)
-        if not txt:
-            continue
-        ng_pct = 0.0
-        for line in txt.splitlines():
-            parts = line.strip().split("\t")
-            if len(parts) >= 5 and parts[4].strip() == "485":
-                try:
-                    ng_pct = float(parts[0])
-                except ValueError:
-                    pass
-        if ng_pct < 80.0:
-            alerts.append(f"Possible contamination in **{rep.parent.parent.name}** — *N. gonorrhoeae* {ng_pct:.1f}%")
-
-    for amr_json in amr_dir.glob("*/*.json"):
-        txt = read_text_safely(amr_json).lower()
-        if any(gene in txt for gene in ["pena", "23s", "mtrr"]):
-            alerts.append(f"AMR markers detected in **{amr_json.parent.name}**")
-
-    return alerts
-
-
-def chart_for_metrics(num_qc: int, num_asm: int, num_amr: int) -> alt.Chart:
-    df = pd.DataFrame(
-        {
-            "Category": ["QC", "Assembly", "AMR"],
-            "Samples": [num_qc, num_asm, num_amr],
-        }
-    )
-    return (
-        alt.Chart(df)
-        .mark_bar()
-        .encode(
-            x=alt.X("Category:N", title=None),
-            y=alt.Y("Samples:Q", title="Samples processed"),
-            tooltip=["Category", "Samples"],
-        )
-        .properties(height=280)
-    )
-
-
 def _rebuild_pipeline_results(db_data: dict) -> dict:
     """Convert load_project() output back into full_pipeline_results session_state format."""
     samples = db_data.get("samples", {})
@@ -369,30 +284,6 @@ def init_directories() -> None:
         ensure_dir(path)
     for sub in [RESULTS_BASE / "qc", RESULTS_BASE / "assembly", RESULTS_BASE / "amr"]:
         ensure_dir(sub)
-
-
-def get_available_projects() -> list[str]:
-    return [p.name for p in list_subdirs(PROJECTS_DIR)]
-
-
-def find_trimmed_reads(project_name: str) -> list[Path]:
-    qc_root = project_qc_dir(project_name)
-    if not qc_root.exists():
-        return []
-    candidates: list[Path] = []
-    for ext in ("*.fastq", "*.fq", "*.fastq.gz", "*.fq.gz"):
-        candidates.extend(qc_root.rglob(ext))
-    return sorted(candidates, key=lambda p: ("trim" not in p.name.lower(), p.name.lower()))
-
-
-def find_contigs(project_name: str) -> list[Path]:
-    asm_root = project_assembly_dir(project_name)
-    if not asm_root.exists():
-        return []
-    candidates: list[Path] = []
-    for ext in ("*.fasta", "*.fa", "*.fna"):
-        candidates.extend(asm_root.rglob(ext))
-    return sorted(candidates, key=lambda p: p.name.lower())
 
 
 _SITE_OPTIONS = ["", "urethral", "rectal", "pharyngeal", "ocular", "conjunctival", "other"]
@@ -522,12 +413,6 @@ def _mut_present(amr_result: AMRResult, lookup: str, gene_key, mut_key) -> bool:
     if lookup == "truncation":
         return any(m.endswith("*") for m in chrom.get(gene_key, []))
     return False
-
-
-def _short_mut(display: str) -> str:
-    """'mtrR G45D' → 'G45D', '23S A2059G' → 'A2059G', 'penA mosaic' → 'mosaic'"""
-    parts = display.split()
-    return parts[-1] if len(parts) > 1 else display
 
 
 _EXPLICIT_RESISTANT_PHENOTYPES: frozenset[str] = frozenset({

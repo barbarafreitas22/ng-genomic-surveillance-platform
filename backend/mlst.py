@@ -56,7 +56,7 @@ def run_mlst(contigs: Path) -> dict:
                         }
         except (FileNotFoundError, subprocess.TimeoutExpired):
             pass
-        return {"error": "No local MLST alleles — run scripts/download_allele_fastas.py", "st": None, "alleles": {}}
+        return {"error": "No local MLST alleles — run scripts/alleles.py", "st": None, "alleles": {}}
 
     alleles = {gene: query_locus_local(gene, contigs, ALLELE_DIR) for gene in MLST_GENES}
 

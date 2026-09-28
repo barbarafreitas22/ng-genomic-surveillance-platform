@@ -55,23 +55,6 @@ class AssemblyStats:
             "qc": {"status": self.qc_status, "flags": self.qc_flags},
         }
 
-    def to_dataframe(self):
-        import pandas as pd
-        rows = [
-            ("n_contigs",    self.n_contigs,    True),
-            ("total_len",    self.total_len,    True),
-            ("n50",          self.n50,          True),
-            ("n90",          self.n90,          self.n90 is not None),
-            ("auN",          self.auN,          self.auN is not None),
-            ("gc_pct",       self.gc_pct,       True),
-            ("completeness", self.completeness, True),
-        ]
-        return pd.DataFrame(
-            [(k, v) for k, v, present in rows if present],
-            columns=["metric", "value"],
-        )
-
-
 @dataclass
 class AMRResult:
     sample_id: str
@@ -109,17 +92,6 @@ class AMRResult:
             "essential_gene_mutations":  self.essential_gene_mutations,
             "essential_gene_synonymous": self.essential_gene_synonymous,
         }
-
-    def to_dataframe(self):
-        import pandas as pd
-        rows = []
-        for gene, muts in self.chromosomal.items():
-            for mut in muts:
-                rows.append({"gene": gene, "mutation": mut, "source": "chromosomal"})
-        for gene, status in self.plasmid.items():
-            if status == "present":
-                rows.append({"gene": gene, "mutation": None, "source": "plasmid"})
-        return pd.DataFrame(rows, columns=["gene", "mutation", "source"])
 
     @classmethod
     def from_dict(cls, d: dict, sample_id: str = "") -> AMRResult:

@@ -26,7 +26,7 @@ RUN micromamba install -n ng -c conda-forge -c defaults \
     && micromamba clean --all --yes
 
 RUN micromamba install -n ng -c bioconda -c conda-forge \
-        fastqc fastp \
+        fastp \
         minimap2 samtools bcftools \
         kraken2 blast ncbi-datasets-cli \
         mlst mash rapidnj ska2=0.5.1 \
@@ -36,16 +36,10 @@ RUN micromamba install -n ng -c bioconda -c conda-forge --freeze-installed \
         spades \
     && micromamba clean --all --yes
 
-# flash2 has no aarch64 conda package so it is built from source.
-# samtools is built from source
-# pins samtools to 0.1.x via perl-bio-samtools, preventing a conda-level upgrade.
-# mlst uses BLAST for typing.
+# samtools is built from source: the conda mlst package pins samtools to 0.1.x
+# via perl-bio-samtools, preventing a conda-level upgrade.
 RUN apt-get update -qq && apt-get install -y --no-install-recommends \
         gcc make bzip2 zlib1g-dev libbz2-dev liblzma-dev libncurses5-dev \
-    && curl -fsSL https://github.com/dstreett/FLASH2/archive/refs/tags/2.2.00.tar.gz \
-       | tar xz -C /tmp \
-    && cd /tmp/FLASH2-2.2.00 && make && cp flash2 /opt/conda/envs/ng/bin/flash \
-    && rm -rf /tmp/FLASH2-2.2.00 \
     && curl -fsSL https://github.com/samtools/samtools/releases/download/1.21/samtools-1.21.tar.bz2 \
        | tar xj -C /tmp \
     && cd /tmp/samtools-1.21 \
@@ -55,9 +49,7 @@ RUN apt-get update -qq && apt-get install -y --no-install-recommends \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 RUN micromamba run -n ng pip install --no-cache-dir \
-        vega-datasets newick pyfastx scikit-image pyngoST chewbbaca && \
-    sed -i "s/from Bio.Align.Applications import MuscleCommandline/try:\n    from Bio.Align.Applications import MuscleCommandline\nexcept ImportError:\n    MuscleCommandline = None/" \
-        /opt/conda/envs/ng/lib/python3.10/site-packages/pyngoST/pyngoST_utils.py
+        vega-datasets newick pyfastx scikit-image chewbbaca
 
 ENV PATH="/opt/conda/envs/ng/bin:${PATH}"
 ENV PYTHONPATH="/workspace"
@@ -74,8 +66,6 @@ RUN mkdir -p \
     app/uploads \
     app/results \
     backend/phylogeny/runs \
-    data/phylogeny/pyngost_db \
-    data/phylogeny/poppunk_db \
     data/phylogeny/cgmlst_schema \
     data/phylogeny/ska_cache/sample_sketch_cache \
     results

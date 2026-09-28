@@ -418,22 +418,6 @@ EU_EEA_TOTALS = {
 
 YEARS = [2020, 2021, 2022, 2023, 2024]
 
-def get_rate(iso_numeric: int, year: int) -> float | None:
-    """Return the notification rate for a country and year, or None."""
-    entry = GONORRHOEA_DATA.get(iso_numeric)
-    if not entry:
-        return None
-    return entry["years"].get(year, {}).get("rate")
-
-
-def get_cases(iso_numeric: int, year: int) -> int | None:
-    """Return the number of cases for a country and year, or None."""
-    entry = GONORRHOEA_DATA.get(iso_numeric)
-    if not entry:
-        return None
-    return entry["years"].get(year, {}).get("cases")
-
-
 def get_map_data(year: int) -> list[dict]:
     """
     Return a list of dicts ready for D3 choropleth rendering.
@@ -451,17 +435,6 @@ def get_map_data(year: int) -> list[dict]:
             "no_data":  entry.get("no_data", False),
         })
     return result
-
-
-def get_trend(iso_numeric: int) -> list[dict]:
-    """Return year-by-year trend for a country (for sparklines/charts)."""
-    entry = GONORRHOEA_DATA.get(iso_numeric)
-    if not entry:
-        return []
-    return [
-        {"year": y, "rate": entry["years"][y]["rate"], "cases": entry["years"][y]["cases"]}
-        for y in YEARS
-    ]
 
 
 if __name__ == "__main__":

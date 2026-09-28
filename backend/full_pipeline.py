@@ -30,13 +30,6 @@ def project_qc_dir(project_name: str) -> Path:
 def project_assembly_dir(project_name: str) -> Path:
     return _project_results_dir(project_name) / "assembly"
 
-def project_amr_dir(project_name: str) -> Path:
-    return _project_results_dir(project_name) / "amr"
-
-def project_phylogeny_dir(project_name: str) -> Path:
-    return _project_results_dir(project_name) / "phylogeny"
-
-
 def _detect_read_type(filename: str) -> str:
     name = filename.lower()
     if re.search(r"(?:^|[_.-])(r?1)(?:[_.-]|\.|$)", name):

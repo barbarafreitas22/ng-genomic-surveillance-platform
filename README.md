@@ -20,11 +20,11 @@ A **Full Pipeline Results** view runs all stages for a batch of samples and prod
 
 | Stage | Tools |
 |---|---|
-| Read QC | FastQC, fastp, Kraken2 (species confirmation) |
+| Read QC | fastp (trimming and read metrics), Kraken2 (species confirmation) |
 | *De novo* assembly | SPAdes |
 | Assembly QC | Biopython (contiguity metrics: N50, N90, L50, L90, auN, GC%), BLASTN (core genome completeness against a local panel of 1,713 *N. gonorrhoeae* core genes) |
 | AMR profiling | Minimap2 + BCFtools variant calling against a curated resistance-gene panel; interpreted against European 2020 (IUSTI) treatment guidelines |
-| Sequence typing | MLST, NG-STAR and NG-MAST: local BLAST/minimap2 against PubMLST allele sets (AMR module); MLST and NG-STAR also available via pyngoST (Phylogenetic module) |
+| Sequence typing | MLST, NG-STAR and NG-MAST: local BLAST against PubMLST allele sets, shared by the AMR and Phylogenetic modules |
 | Phylogenetics | SKA2 (split k-mer, SNP distances), RapidNJ (tree construction), chewBBACA cgMLST (allele-based clustering) |
 
 ## Folder structure
@@ -39,7 +39,7 @@ A **Full Pipeline Results** view runs all stages for a batch of samples and prod
 │   ├── worker.py           background job queue consumer
 │   └── db.py                SQLite persistence per project
 ├── data/                  reference genome, gene panels, cgMLST/Kraken2 databases
-├── config.ini             external tool binary paths (fastqc, blastn, minimap2, ...)
+├── config.ini             external tool binary paths (fastp, blastn, minimap2, ...)
 ├── scripts/                one-off setup scripts and admin utilities (schema downloads, job timing report)
 ├── tests/                  test fixtures
 ├── environment.yml        Conda environment definition
@@ -76,7 +76,7 @@ Edit `.env` to match the machine's available RAM. `NG_WORKER_MEMORY` sets the wo
 docker compose up --build -d
 ```
 
-The first build takes several minutes. Named volumes (`ng_projects`, `ng_results`, etc.) persist analysis results across rebuilds. The cgMLST schema and pyngoST database are versioned under `data/phylogeny/` and bind-mounted, no download step needed on a fresh deploy. To reset non-versioned data: `docker compose down -v`.
+The first build takes several minutes. Named volumes (`ng_projects`, `ng_results`, etc.) persist analysis results across rebuilds. The cgMLST schema is versioned under `data/phylogeny/` and bind-mounted, no download step needed on a fresh deploy. To reset non-versioned data: `docker compose down -v`.
 
 ## License
 

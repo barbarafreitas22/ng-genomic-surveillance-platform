@@ -56,7 +56,6 @@ def render() -> None:
     | rapidNJ | Bioconda |
     | Kraken2 | Bioconda |
     | chewBBACA | Bioconda |
-    | pyngoST | pip |
     | Python | 3.10 (conda-forge) |
     | Streamlit | pip |
     """)
@@ -608,8 +607,8 @@ def render() -> None:
     All bioinformatics tools are installed inside the Docker image via **micromamba**
     (from the `Dockerfile`). Reference databases in `data/` (gene FASTA files, Kraken2)
     are baked into the image at build time. `data/phylogeny/` is overridden at runtime
-    with a bind mount, allowing updates to the backbone sketch, pyngoST, and cgMLST
-    databases without rebuilding the image.
+    with a bind mount, allowing updates to the backbone sketch and cgMLST
+    schema without rebuilding the image.
 
     **Volume mounts (ng-platform and ng-worker):**
 
@@ -617,16 +616,16 @@ def render() -> None:
     |---|---|---|
     | `./app` | `/workspace/app` | Application code (live-reload) |
     | `./backend` | `/workspace/backend` | Analysis modules (live-reload) |
-    | `./data/phylogeny` | `/workspace/data/phylogeny` | Backbone sketch, pyngoST DB, cgMLST schema (all versioned in the repo) |
+    | `./data/phylogeny` | `/workspace/data/phylogeny` | Backbone genomes and sketch, cgMLST schema (versioned in the repo) |
     | `ng_projects` (named) | `/workspace/app/projects` | Project data and sample uploads |
     | `ng_phylo_runs` (named) | `/workspace/backend/phylogeny/runs` | Phylogeny run outputs |
     | `ng_results` (named) | `/workspace/results` | Analysis result files |
 
     Named volumes (`ng_projects`, `ng_phylo_runs`, `ng_results`) are managed by Docker
-    and persist across container recreations. The pyngoST database and cgMLST schema
-    are not named volumes: they are ordinary files under `data/phylogeny/`, versioned
+    and persist across container recreations. The cgMLST schema is not a named
+    volume: it is stored as ordinary files under `data/phylogeny/`, versioned
     in the repository, so a fresh `docker compose up --build` on a new machine already
-    has them, no download step needed.
+    has it, no download step needed.
     """)
 
     with st.expander("Build and run commands"):

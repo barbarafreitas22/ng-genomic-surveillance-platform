@@ -284,22 +284,18 @@ def _build_phylogeny(phylogeny: dict | None) -> str:
         return "<p style='font-size:12px;color:#6b7280'>No phylogeny data available.</p>"
 
     cr = phylogeny["cluster_report"]
-    has_pp = any("poppunk_cluster" in v for v in cr.values())
-    headers = ["Sample", "Type", "Genogroup (≤2000 SNP)"]
-    if has_pp:
-        headers.append("PopPUNK Cluster")
-    headers += ["Nearest neighbour", "Distance (SNPs)", "Distance (%)"]
+    headers = ["Sample", "Type", "Genogroup/Cluster (cgMLST ≤400 AD)",
+               "Nearest neighbour", "Distance (SNPs)", "Distance (%)"]
 
     rows = []
     for sname, info in sorted(cr.items()):
         stype = "Uploaded" if info.get("is_uploaded") else "Reference"
+        genogroup = (info.get("cgmlst") or {}).get("genogroup")
         row = [
             f"<strong>{sname}</strong>" if info.get("is_uploaded") else sname,
             stype,
-            str(info.get("cluster", "—")),
+            str(genogroup) if genogroup is not None else "—",
         ]
-        if has_pp:
-            row.append(info.get("poppunk_cluster", "—"))
         row += [
             info.get("nearest_neighbour", "—"),
             f"{info.get('nn_distance', 0):.0f}",

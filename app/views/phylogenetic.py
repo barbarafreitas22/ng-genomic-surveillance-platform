@@ -38,37 +38,21 @@ def render() -> None:
     from backend.phylogeny.viewer import load_tree_newick, newick_to_tree_json
 
     from backend.phylogeny.cgmlst import is_schema_ready, download_schema
-    from backend.phylogeny.run_pyngost import is_pyngost_ready, download_pyngost_db
-    _schema_ready  = is_schema_ready()
-    _pyngost_ready = is_pyngost_ready()
-    if not _schema_ready or not _pyngost_ready:
+    _schema_ready = is_schema_ready()
+    if not _schema_ready:
         with st.expander("Reference databases missing", expanded=True):
-            if not _schema_ready:
-                st.warning(
-                    "cgMLST schema not found "
-                )
-                if st.button("Download cgMLST schema", key="dl_cgmlst_schema"):
-                    with st.status("Downloading cgMLST schema from PubMLST…", expanded=True) as _s:
-                        try:
-                            download_schema()
-                            _s.update(label="cgMLST schema ready.", state="complete")
-                            st.rerun()
-                        except Exception as e:
-                            _s.update(label="Download failed", state="error")
-                            st.error(str(e))
-            if not _pyngost_ready:
-                st.warning(
-                    "pyngoST allele database not found."
-                )
-                if st.button("Download pyngoST database", key="dl_pyngost_db"):
-                    with st.status("Downloading MLST/NG-STAR databases…", expanded=True) as _s:
-                        try:
-                            download_pyngost_db()
-                            _s.update(label="pyngoST database ready.", state="complete")
-                            st.rerun()
-                        except Exception as e:
-                            _s.update(label="Download failed", state="error")
-                            st.error(str(e))
+            st.warning(
+                "cgMLST schema not found "
+            )
+            if st.button("Download cgMLST schema", key="dl_cgmlst_schema"):
+                with st.status("Downloading cgMLST schema from PubMLST…", expanded=True) as _s:
+                    try:
+                        download_schema()
+                        _s.update(label="cgMLST schema ready.", state="complete")
+                        st.rerun()
+                    except Exception as e:
+                        _s.update(label="Download failed", state="error")
+                        st.error(str(e))
 
 
     st.markdown("""

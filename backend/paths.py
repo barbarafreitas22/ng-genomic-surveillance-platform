@@ -42,9 +42,5 @@ BACKBONE_HASH_FILE      = SKA_CACHE_DIR / "backbone.md5"
 BACKBONE_FILE_LIST      = SKA_CACHE_DIR / "backbone_file_list.tsv"
 SAMPLE_SKETCH_CACHE_DIR = SKA_CACHE_DIR / "sample_sketch_cache"
 SAMPLE_SKETCH_MANIFEST  = SKA_CACHE_DIR / "sample_sketch_manifest.json"
-POPPUNK_DB_DIR          = PHYLOGENY_DATA_DIR / "poppunk_db"
 
-PYNGOST_DB_DIR          = PHYLOGENY_DATA_DIR / "pyngost_db"
 CGMLST_SCHEMA_DIR       = PHYLOGENY_DATA_DIR / "cgmlst_schema"
-
-SNP_GENOGROUP_THRESHOLD    = 2000

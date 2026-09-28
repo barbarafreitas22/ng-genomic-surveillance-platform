@@ -19,7 +19,6 @@ try:
 except ImportError:
     _psutil = None
 
-from backend.phylogeny.run_pyngost import run_typing, is_pyngost_ready
 from backend.qc import run_fastp as _run_fastp, FASTP_BIN as _FASTP_BIN
 
 logger = logging.getLogger(__name__)
@@ -91,6 +90,30 @@ def concatenate_fasta(input_path, output_path):
         out.write(f">{sample_name}\n{combined}\n")
 
     return sample_name
+
+
+def _local_typing(contigs: Path) -> dict:
+    from backend.amr import detect_mosaic_pena
+    from backend.mlst import run_mlst
+    from backend.ngmast import run_ngmast
+    from backend.ngstar import run_ngstar
+
+    mlst   = run_mlst(contigs)
+    ngstar = run_ngstar(contigs)
+    ngmast = run_ngmast(contigs)
+    mosaic = detect_mosaic_pena(contigs)
+
+    def _st(result: dict, key: str) -> str:
+        if result.get("error") or not result.get(key):
+            return "—"
+        return str(result[key])
+
+    return {
+        "mlst_st":     _st(mlst, "st"),
+        "ngstar_st":   _st(ngstar, "ST"),
+        "ngmast_st":   _st(ngmast, "ST"),
+        "mosaic_pena": "Yes" if mosaic.get("mosaic_suspected") else ("No" if mosaic.get("identity") else "—"),
+    }
 
 
 def get_base_genomes():
@@ -450,15 +473,14 @@ def build_distance_tree(uploaded_samples):
             entry["nn_backbone_info"] = backbone_meta[nn_name]
         cluster_report[sample] = entry
 
-    pyngost_ready = is_pyngost_ready()
-    if upload_raw_paths and pyngost_ready:
+    for raw_path in upload_raw_paths:
+        sample = Path(raw_path).stem
+        if sample not in cluster_report:
+            continue
         try:
-            typing = run_typing(upload_raw_paths, run_dir)
-            for sample, tdata in typing.items():
-                if sample in cluster_report:
-                    cluster_report[sample]["typing"] = tdata
+            cluster_report[sample]["typing"] = _local_typing(Path(raw_path))
         except Exception:
-            logger.exception("MLST/NG-STAR typing failed for run_dir=%s", run_dir)
+            logger.exception("Sequence typing failed for %s", sample)
 
     cgmlst_result = None
     try:
@@ -484,6 +506,5 @@ def build_distance_tree(uploaded_samples):
         "cluster_report": cluster_report,
         "matrix_path":    matrix_csv,
         "upload_names":   list(upload_names),
-        "pyngost_ready":  pyngost_ready,
         "cgmlst_result":  cgmlst_result,
     }

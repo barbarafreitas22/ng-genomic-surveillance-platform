@@ -21,7 +21,6 @@ dependencies:
   - rich
   - psutil
   - pip
-  - fastqc
   - fastp
   - minimap2
   - samtools
@@ -39,5 +38,4 @@ dependencies:
     - newick
     - pyfastx
     - scikit-image
-    - pyngoST
     - chewbbaca
