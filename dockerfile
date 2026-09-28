@@ -80,8 +80,7 @@ RUN mkdir -p \
     data/phylogeny/ska_cache/sample_sketch_cache \
     results
 
-RUN micromamba run -n ng python scripts/build_kraken2_db.py \
-    || echo "Kraken2 database build skipped — run scripts/build_kraken2_db.py manually after startup"
+RUN micromamba run -n ng python scripts/build_kraken2_db.py
 
 RUN chown -R mambauser:mambauser /workspace
 
