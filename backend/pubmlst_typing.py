@@ -29,7 +29,7 @@ def query_locus_local(gene: str, assembly: Path, allele_dir: Path) -> str:
     The coverage is measured against the allele .
 
     Thresholds:
-    >= 99.9 and scov >= 0.95  -> exact allele
+    0 mismatches, 0 gaps, full allele length -> exact allele
     >= 95.0 and scov >= 0.80  -> closest known
       below                  -> new
     """
@@ -43,7 +43,7 @@ def query_locus_local(gene: str, assembly: Path, allele_dir: Path) -> str:
                 "blastn",
                 "-query",           str(assembly),
                 "-subject",         str(alleles_fasta),
-                "-outfmt",          "6 sseqid pident length slen",
+                "-outfmt",          "6 sseqid pident length slen mismatch gaps",
                 "-perc_identity",   "90",
                 "-max_target_seqs", "10",
                 "-dust",            "no",
@@ -59,33 +59,36 @@ def query_locus_local(gene: str, assembly: Path, allele_dir: Path) -> str:
         return "new"
 
     best: Optional[tuple] = None
-    best_score = -1.0
+    best_score: tuple = (-1, -1.0)
 
     for line in proc.stdout.strip().splitlines():
         parts = line.split("\t")
-        if len(parts) < 4:
+        if len(parts) < 6:
             continue
         try:
-            sseqid = parts[0].split()[0]
-            pident = float(parts[1])
-            length = int(parts[2])
-            slen   = int(parts[3])
+            sseqid   = parts[0].split()[0]
+            pident   = float(parts[1])
+            length   = int(parts[2])
+            slen     = int(parts[3])
+            mismatch = int(parts[4])
+            gaps     = int(parts[5])
         except (ValueError, IndexError):
             continue
-        scov  = length / slen if slen > 0 else 0.0
-        score = pident * scov
+        scov  = min(length / slen, 1.0) if slen > 0 else 0.0
+        exact = mismatch == 0 and gaps == 0 and length == slen
+        score = (int(exact), pident * scov)
         if score > best_score:
             best_score = score
-            best = (sseqid, pident, scov)
+            best = (sseqid, pident, scov, exact)
 
     if best is None:
         return "new"
 
-    sseqid, pident, scov = best
+    sseqid, pident, scov, exact = best
     # PubMLST FASTA headers
     allele_id = sseqid.rsplit("_", 1)[-1]
 
-    if pident >= 99.9 and scov >= 0.95:
+    if exact:
         return allele_id
     if pident >= 95.0 and scov >= 0.80:
         return f"~{allele_id}"

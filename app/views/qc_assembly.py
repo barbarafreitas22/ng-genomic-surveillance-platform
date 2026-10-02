@@ -354,39 +354,50 @@ def render() -> None:
             "pct_breadth_10x": ("Breadth at ≥10×",  80.0,  "%",  "≥80% of genome covered at ≥10×"),
         }
         _thresh_rows = []
+        _thresh_pass: dict[tuple[str, str], bool] = {}
         for _sid, _res in _qc_results.items():
             if "error" in _res:
                 continue
             _met = _res.get("metrics", {})
+            _row = {"Sample": _sid}
+            _flags = []
             for _key, (_label, _thr, _unit, _desc) in _QC_THRESHOLDS.items():
+                _col = f"{_label} (≥{_thr:.0f}{_unit})"
                 _val = _met.get(_key)
                 if _val is None:
+                    _row[_col] = "—"
                     continue
-                _pass = _val >= _thr
-                _thresh_rows.append({
-                    "Sample":    _sid,
-                    "Metric":    _label,
-                    "Value":     f"{_val:.1f}{_unit}",
-                    "Threshold": f"≥{_thr:.0f}{_unit}",
-                    "Status":    "Pass" if _pass else "Fail",
-                    "Note":      _desc,
-                    "_pass":     _pass,
-                })
+                _row[_col] = f"{_val:.1f}{_unit}"
+                _thresh_pass[(_sid, _col)] = _val >= _thr
+                _flags.append(_val >= _thr)
+            if not _flags:
+                continue
+            _row["Status"] = "Pass" if all(_flags) else "Fail"
+            _thresh_pass[(_sid, "Status")] = all(_flags)
+            _thresh_rows.append(_row)
 
         if _thresh_rows:
-            st.markdown("##### Sequencing QC — Thresholds")
-            _df_thr = pd.DataFrame(_thresh_rows).drop(columns=["_pass"])
+            st.markdown("##### QC thresholds")
+            _df_thr = pd.DataFrame(_thresh_rows)
 
             def _thr_style(row):
-                if row["Status"] == "Pass":
-                    return [""] * 4 + ["background-color:#f0fdf4;color:#166534;font-weight:600"] + [""]
-                return [""] * 4 + ["background-color:#fef2f2;color:#991b1b;font-weight:600"] + [""]
+                styles = []
+                for col in row.index:
+                    ok = _thresh_pass.get((row["Sample"], col))
+                    if ok is None:
+                        styles.append("")
+                    elif ok:
+                        styles.append("background-color:#f0fdf4;color:#166534;font-weight:600")
+                    else:
+                        styles.append("background-color:#fef2f2;color:#991b1b;font-weight:600")
+                return styles
 
             st.dataframe(
                 _df_thr.style.apply(_thr_style, axis=1),
                 use_container_width=True,
                 hide_index=True,
             )
+            st.caption(" · ".join(_desc for _, _, _, _desc in _QC_THRESHOLDS.values()))
 
         st.download_button(
             "⬇ Download summary (CSV)",
@@ -498,43 +509,8 @@ def render() -> None:
                 _captions,
             )
         else:
-            _asm_collected = _collect_job_results(_rel_asm)
-            _amr_job_ids: list[str] = []
-            for _sid_j, _ares in _asm_collected.items():
-                _cpath = _ares.get("contigs_path")
-                if _cpath and "error" not in _ares and db:
-                    _amr_payload: dict = {"contigs": _cpath}
-                    _amr_job_ids.append(
-                        db.submit_job(_asm_poll_proj, _sid_j, "amr", _amr_payload)
-                    )
-
-            st.session_state["assembly_results"] = _asm_collected
+            st.session_state["assembly_results"] = _collect_job_results(_rel_asm)
             st.session_state["_asm_pending_jobs"] = []
-            if _amr_job_ids:
-                st.session_state["_amr_worker_pending_jobs"] = _amr_job_ids
-                st.session_state["_amr_worker_pending_project"] = _asm_poll_proj
-            _load_project_cached.clear()
-            st.rerun()
-
-    # AMR worker job polling (auto-triggered after assembly)
-    _amr_worker_ids = st.session_state.get("_amr_worker_pending_jobs", [])
-    if _amr_worker_ids and db:
-        _amr_wpoll_proj = st.session_state.get("_amr_worker_pending_project", "")
-        _all_amrw_jobs = {j["id"]: j for j in db.get_project_jobs(_amr_wpoll_proj)}
-        _rel_amrw = [_all_amrw_jobs[jid] for jid in _amr_worker_ids if jid in _all_amrw_jobs]
-        _c_amrw = _job_status_counts(_rel_amrw)
-        if _c_amrw["done"] < _c_amrw["total"]:
-            _captions = []
-            for _j in _rel_amrw:
-                _ico = {"queued": "⏳", "running": "⏩", "done": "✓", "error": "✗"}.get(_j["status"], "·")
-                _captions.append(f"{_ico} {_j['sample_id']}: {_j['status']}")
-            _render_job_wait(
-                _c_amrw, "#### AMR analysis running…",
-                f"{_c_amrw['done']}/{_c_amrw['total']} done · {_c_amrw['running']} running · {_c_amrw['queued']} queued",
-                _captions,
-            )
-        else:
-            st.session_state["_amr_worker_pending_jobs"] = []
             _load_project_cached.clear()
             st.rerun()
 

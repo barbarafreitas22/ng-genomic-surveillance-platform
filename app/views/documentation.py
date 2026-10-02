@@ -179,8 +179,12 @@ def render() -> None:
 
     | Tier | Contigs | N50 | Total length |
     |---|---|---|---|
-    | Pass | ≤150 | >30 kb | 2.0–2.2 Mb |
-    | Caution | ≤180 | >20 kb | 1.8–2.2 Mb |
+    | Pass | ≤150 | >30 kb | 2.0–2.3 Mb |
+    | Caution | ≤180 | >20 kb | 1.8–2.3 Mb |
+
+    The upper length bound is raised from the CDC's 2.2 Mb to 2.3 Mb: complete
+    *N. gonorrhoeae* genomes, chromosome plus plasmids, reach ~2.29 Mb (e.g. the WHO 2016
+    reference panel, 2.17–2.29 Mb), so 2.2 Mb would flag correct assemblies.
 
     Core genome completeness (BLASTN, below) and GC% (50–56%) are independent hard-fail
     checks specific to this platform, not part of the CDC criteria. The CDC source also

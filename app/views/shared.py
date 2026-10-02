@@ -5,6 +5,7 @@ import os
 import re
 import sys
 import tempfile
+import unicodedata
 from pathlib import Path
 from typing import Optional
 
@@ -286,10 +287,59 @@ def init_directories() -> None:
         ensure_dir(sub)
 
 
-_SITE_OPTIONS = ["", "urethral", "rectal", "pharyngeal", "ocular", "conjunctival", "other"]
-_SEX_OPTIONS  = ["", "male", "female", "unknown"]
-_META_COLS    = ["sample_id", "collection_date", "anatomical_site", "sex", "age",
+_SITE_OPTIONS = ["", "urethral", "cervical", "rectal", "pharyngeal", "ocular", "conjunctival", "other"]
+_META_COLS    = ["sample_id", "collection_date", "anatomical_site",
                  "country", "city", "health_unit"]
+
+_META_COL_ALIASES: dict[str, str] = {
+    **dict.fromkeys([
+        "sample_id", "sample", "sampleid", "sample_name", "sample_code", "id", "isolate",
+        "isolate_id", "isolate_name", "strain", "strain_id", "name", "accession",
+        "run", "run_id", "run_accession", "sra_run", "ena_run",
+        "amostra", "id_amostra", "codigo_amostra", "codigo", "isolado", "id_isolado",
+        "estirpe", "identificacao", "nome", "referencia",
+    ], "sample_id"),
+    **dict.fromkeys([
+        "collection_date", "date", "sampling_date", "date_collection", "date_sampling",
+        "isolation_date", "date_isolation", "specimen_date", "sample_date",
+        "data", "data_colheita", "colheita", "data_amostra", "data_recolha",
+        "data_isolamento", "data_amostragem",
+    ], "collection_date"),
+    **dict.fromkeys([
+        "anatomical_site", "site", "specimen_site", "sample_site", "collection_site",
+        "body_site", "source", "specimen", "specimen_type", "sample_type",
+        "isolation_source", "isolation_site", "source_isolation",
+        "local_anatomico", "local_colheita", "produto", "tipo_amostra",
+        "tipo_produto", "sitio_anatomico", "fonte_isolamento",
+    ], "anatomical_site"),
+    **dict.fromkeys(["country", "nation", "pais", "nacionalidade"], "country"),
+    **dict.fromkeys([
+        "city", "municipality", "city_municipality", "town", "location", "locality",
+        "cidade", "concelho", "municipio", "localidade",
+        "region", "district", "province", "state", "regiao", "distrito", "provincia",
+    ], "city"),
+    **dict.fromkeys([
+        "geographic_location", "geographical_location", "geografic_location",
+        "geografical_location", "geographic", "geografic", "geo_location", "geo_loc_name",
+        "geo_loc", "localizacao_geografica", "localizacao",
+    ], "geo"),
+    **dict.fromkeys([
+        "health_unit", "unit", "hospital", "institution", "health_facility", "facility",
+        "clinic", "laboratory", "lab", "unidade_saude", "unidade", "instituicao",
+        "centro_saude", "clinica", "laboratorio",
+    ], "health_unit"),
+}
+_SITE_ALIASES: dict[str, str] = {
+    **dict.fromkeys(["urethra", "urethral", "uretral", "uretra"], "urethral"),
+    **dict.fromkeys(["cervix", "cervical", "endocervical", "endocervix", "colo", "colo_utero",
+                     "colo_uterino", "endocolo"], "cervical"),
+    **dict.fromkeys(["rectum", "rectal", "anal", "anorectal", "anus", "reto", "retal", "anus_reto"], "rectal"),
+    **dict.fromkeys(["pharynx", "pharyngeal", "throat", "oropharyngeal", "oropharynx",
+                     "faringe", "faringeo", "orofaringe", "orofaringeo", "garganta"], "pharyngeal"),
+    **dict.fromkeys(["eye", "ocular", "olho"], "ocular"),
+    **dict.fromkeys(["conjunctiva", "conjunctival", "conjuntiva", "conjuntival"], "conjunctival"),
+    **dict.fromkeys(["other", "outro", "outros"], "other"),
+}
 
 
 _MATRIX_COLS: list[tuple] = [
@@ -302,7 +352,9 @@ _MATRIX_COLS: list[tuple] = [
     ("AZM", "mtrR g-131a", "promoter", "mtrR_promoter",  "mtr120"),
     ("AZM", "mtrR ins2bp", "promoter", "mtrR_promoter",  "ins2bp"),
     ("AZM", "mtrR trunc",  "truncation","mtrR",           None),
-    ("AZM", "mtrD mosaic", "chrom",    "mtrD_mosaic_1",  "present"),
+    ("AZM", "mtrR prm mosaic", "anyof", ("mtrR_promoter_mosaic_1", "mtrR_promoter_mosaic_2", "mtrR_promoter_mosaic_3"), "present"),
+    ("AZM", "mtrD mosaic", "anyof",    ("mtrD_mosaic_1", "mtrD_mosaic_2", "mtrD_mosaic_3", "mtrD_mosaic_ambiguous"), "present"),
+    ("AZM", "mtrC disrupted", "truncation", "mtrC",      None),
     ("AZM", "macAB prmt",  "promoter", "macAB_promoter", "mut"),
     ("AZM", "rplD G68D",  "chrom",    "rplD",           "G68D"),
     ("AZM", "rplD G68C",  "chrom",    "rplD",           "G68C"),
@@ -387,15 +439,9 @@ _GROUP_LABELS: dict[str, str] = {
     "AMG": "Aminoglycosides",
 }
 
-_CHROM_GENE_SUPPRESS: set[str] = {
-    "mtrD_mosaic_2", "mtrD_mosaic_3",
-    "mtrR_promoter_mosaic_2", "mtrR_promoter_mosaic_3",
-}
 _CHROM_GENE_RENAME: dict[str, str] = {
     "mtrR_promoter":           "mtrR_prom",
-    "mtrD_mosaic_1":           "mtrD_mosaic",
     "mtrD_mosaic_ambiguous":   "mtrD_mosaic",
-    "mtrR_promoter_mosaic_1":  "mtrR_prom_mosaic",
     "macAB_promoter":          "macAB_prom",
     "norM_promoter":           "norM_prom",
 }
@@ -411,7 +457,9 @@ def _mut_present(amr_result: AMRResult, lookup: str, gene_key, mut_key) -> bool:
     if lookup == "mosaic":
         return bool(amr_result.mosaic_pena.get("mosaic_suspected"))
     if lookup == "truncation":
-        return any(m.endswith("*") for m in chrom.get(gene_key, []))
+        return any(m.endswith("*") or m == "disrupted" for m in chrom.get(gene_key, []))
+    if lookup == "anyof":
+        return any("present" in chrom.get(k, []) for k in gene_key)
     return False
 
 
@@ -435,12 +483,14 @@ def _matrix_entry_phenotype(lookup: str, gene_key, mut_key) -> str | None:
         return _PLASMID_CDC_RULES.get(gene_key)
     if lookup == "truncation":
         return _TRUNCATION_RULES.get(gene_key)
+    if lookup == "anyof":
+        return _CDC_RULES.get(f"{gene_key[0]}_{mut_key}")
     if lookup == "mosaic":
         return None  # identity-based detect_mosaic_pena(), independent of infer_cdc_phenotype()
     return None
 
 
-def _matrix_entry_determinant(lookup: str, gene_key, mut_key) -> tuple[str, str | None]:
+def _matrix_entry_determinant(lookup: str, gene_key, mut_key, amr_result: AMRResult | None = None) -> tuple[str, str | None]:
     """(gene, mutation) for a detected _MATRIX_COLS entry; mutation is None when it must render standalone, not slash-grouped."""
     if lookup == "plasmid":
         return (str(gene_key), None)
@@ -448,6 +498,10 @@ def _matrix_entry_determinant(lookup: str, gene_key, mut_key) -> tuple[str, str 
         return ("penA mosaic", None)
     if lookup == "truncation":
         return (f"{gene_key}_disrupted", None)
+    if lookup == "anyof":
+        chrom = amr_result.chromosomal if amr_result else {}
+        found = [k for k in gene_key if "present" in chrom.get(k, [])]
+        return ("; ".join(found) or str(gene_key[0]), None)
     if lookup == "promoter":
         pw_name = {"del35A": "a-57del", "AtoC": "-56a>c", "mtr120": "g-131a"}.get(str(mut_key), str(mut_key))
         return (str(gene_key), pw_name)
@@ -481,7 +535,7 @@ def agent_resistance_summary(amr_result: AMRResult) -> list[dict]:
         phenos_found: set[str] = set()
         for _, _display, lookup, gene_key, mut_key in entries:
             if _mut_present(amr_result, lookup, gene_key, mut_key):
-                determinant_pairs.append(_matrix_entry_determinant(lookup, gene_key, mut_key))
+                determinant_pairs.append(_matrix_entry_determinant(lookup, gene_key, mut_key, amr_result))
                 p = _matrix_entry_phenotype(lookup, gene_key, mut_key)
                 if p:
                     phenos_found.add(p)
@@ -814,7 +868,9 @@ def _render_cohort_amr_profile(amr_samples: dict, project_name: str = "") -> Non
         elif lookup == "mosaic":
             _col_pheno[display] = "penA mosaic suspected (sequence identity, independent of the mutation-count check)"
         elif lookup == "truncation":
-            _col_pheno[display] = "efflux_pump_overexpression"
+            _col_pheno[display] = _TRUNCATION_RULES.get(gene_key) or f"{gene_key} loss of function"
+        elif lookup == "anyof":
+            _col_pheno[display] = _CDC_RULES.get(f"{gene_key[0]}_{mut_key}", c[0])
         else:
             _col_pheno[display] = c[0]
 
@@ -1148,41 +1204,232 @@ def render_metadata_charts(meta: dict, sample_ids: list[str], project_name: str 
             tooltip=[title, "% resistant", alt.Tooltip("n:Q", title="Samples")],
         ).properties(height=160, title=f"% resistant by {title.lower()}")
 
-    age_pct_chart = None
-    age_s = df.get("age")
-    if age_s is not None:
-        ages_df = df[(df["Resistance category"] != "Unknown")].copy()
-        ages_df["age_num"] = pd.to_numeric(ages_df.get("age"), errors="coerce")
-        ages_df = ages_df.dropna(subset=["age_num"])
-        if not ages_df.empty:
-            ages_df["Age group"] = pd.cut(
-                ages_df["age_num"], bins=[0, 20, 30, 40, 50, 200],
-                labels=["<20", "20-29", "30-39", "40-49", "50+"], right=False,
-            )
-            age_grp = ages_df.groupby("Age group", observed=True).agg(
-                n=("Resistance category", "size"),
-                pct_resistant=("Resistance category", lambda x: round((x != "Susceptible").mean() * 100, 1)),
-            ).reset_index()
-            if not age_grp.empty:
-                age_pct_chart = alt.Chart(age_grp).mark_bar(color="#dc2626").encode(
-                    x=alt.X("Age group:N", title="Age", sort=["<20", "20-29", "30-39", "40-49", "50+"]),
-                    y=alt.Y("pct_resistant:Q", title="% resistant", scale=alt.Scale(domain=[0, 100])),
-                    tooltip=["Age group", alt.Tooltip("pct_resistant:Q", title="% resistant"),
-                             alt.Tooltip("n:Q", title="Samples")],
-                ).properties(height=160, title="% resistant by age")
+    locality_chart = None
+    city_s = df.get("city")
+    if city_s is not None and city_s.astype(bool).any():
+        loc = df[city_s.astype(bool)].groupby("city").size().reset_index(name="Samples")
+        loc.columns = ["Region / locality", "Samples"]
+        locality_chart = alt.Chart(loc).mark_arc(innerRadius=40).encode(
+            theta=alt.Theta("Samples:Q"),
+            color=alt.Color("Region / locality:N", legend=alt.Legend(orient="bottom", columns=2)),
+            tooltip=["Region / locality", alt.Tooltip("Samples:Q", title="Samples")],
+        ).properties(height=220, title="Samples by region / locality")
 
     dist_charts = [
         c for c in (
             _pct_resistant_chart("anatomical_site", "Site"),
-            _pct_resistant_chart("sex", "Sex"),
-            age_pct_chart,
-            _pct_resistant_chart("country", "Country"),
+            locality_chart,
         ) if c is not None
     ]
     if dist_charts:
         for col, chart in zip(st.columns(len(dist_charts)), dist_charts):
             with col:
                 st.altair_chart(chart, use_container_width=True)
+
+    if city_s is not None and city_s.astype(bool).any() and project_name:
+        samples = _load_project_cached(project_name).get("samples", {})
+        heat_rows = []
+        for _, r in df[city_s.astype(bool)].iterrows():
+            amr = samples.get(r["sample_id"], {}).get("amr")
+            if not isinstance(amr, AMRResult):
+                continue
+            for agent in agent_resistance_summary(amr):
+                heat_rows.append({
+                    "Region / locality": r["city"],
+                    "Antibiotic": agent["Agent"],
+                    "resistant": agent["Inferred resistance"] == "Resistant",
+                })
+        if heat_rows:
+            heat = (
+                pd.DataFrame(heat_rows)
+                .groupby(["Region / locality", "Antibiotic"])
+                .agg(n=("resistant", "size"), n_res=("resistant", "sum"))
+                .reset_index()
+            )
+            heat["% resistant"] = (heat["n_res"] / heat["n"] * 100).round(1)
+            heat["Resistant / samples"] = heat["n_res"].astype(int).astype(str) + "/" + heat["n"].astype(str)
+            agent_order = [_GROUP_LABELS.get(g, g) for g in dict.fromkeys(c[0] for c in _MATRIX_COLS)]
+            base = alt.Chart(heat).encode(
+                x=alt.X("Antibiotic:N", sort=agent_order, title=None, axis=alt.Axis(labelAngle=-30)),
+                y=alt.Y("Region / locality:N", title=None),
+            )
+            cells = base.mark_rect(stroke="white").encode(
+                color=alt.Color("% resistant:Q", scale=alt.Scale(domain=[0, 100], scheme="reds"),
+                                legend=alt.Legend(title="% resistant")),
+                tooltip=["Region / locality", "Antibiotic", "% resistant", "Resistant / samples"],
+            )
+            labels = base.mark_text(fontSize=10).encode(
+                text="Resistant / samples:N",
+                color=alt.condition("datum['% resistant'] > 60", alt.value("white"), alt.value("#1f2937")),
+            )
+            st.altair_chart(
+                (cells + labels).properties(
+                    height=max(120, 30 * heat["Region / locality"].nunique()),
+                    title="% resistant by region / locality and antibiotic",
+                ),
+                use_container_width=True,
+            )
+
+
+def _sample_key(name) -> str:
+    key = str(name).strip().lower()
+    key = re.sub(r"\.(fasta|fa|fna|fas|fastq|fq)(\.gz)?$", "", key)
+    key = re.sub(r"[._-]contigs$", "", key)
+    return key.split(".")[0]
+
+
+_NAME_STOPWORDS = {"de", "da", "do", "das", "dos", "of", "the", "e", "and"}
+_META_ALIAS_RANK = {alias: rank for rank, alias in enumerate(_META_COL_ALIASES)}
+
+
+def _site_from_text(value: str) -> str:
+    key = _normalise_header(value)
+    if not key:
+        return ""
+    if key in _SITE_ALIASES:
+        return _SITE_ALIASES[key]
+    words = key.split("_")
+    for pair in zip(words, words[1:]):
+        if "_".join(pair) in _SITE_ALIASES:
+            return _SITE_ALIASES["_".join(pair)]
+    for word in words:
+        if word in _SITE_ALIASES:
+            return _SITE_ALIASES[word]
+    return "other"
+
+
+def _normalise_header(col) -> str:
+    text = unicodedata.normalize("NFKD", str(col)).encode("ascii", "ignore").decode().lower()
+    words = [w for w in re.split(r"[^a-z0-9]+", text) if w and w not in _NAME_STOPWORDS]
+    return "_".join(words)
+
+
+def _read_metadata_table(uploaded, sample_ids: list[str] | None = None) -> pd.DataFrame:
+    if uploaded.name.lower().endswith((".xlsx", ".xls")):
+        try:
+            df = pd.read_excel(uploaded, dtype=str)
+        except ImportError:
+            raise ValueError("Excel support is not installed in this image yet; save the table as CSV.")
+    else:
+        df = pd.read_csv(uploaded, sep=None, engine="python", dtype=str)
+
+    chosen: dict[str, tuple[str, int]] = {}
+    id_candidates: list[str] = []
+    for col in df.columns:
+        key = _normalise_header(col)
+        field = _META_COL_ALIASES.get(key)
+        if field == "sample_id":
+            id_candidates.append(col)
+        if field and (field not in chosen or _META_ALIAS_RANK[key] < chosen[field][1]):
+            chosen[field] = (col, _META_ALIAS_RANK[key])
+
+    if sample_ids:
+        wanted = {_sample_key(sid) for sid in sample_ids}
+
+        def _hits(col: str) -> int:
+            return int(df[col].fillna("").map(_sample_key).isin(wanted).sum())
+
+        best = max(id_candidates, key=_hits, default=None)
+        if best is None or _hits(best) == 0:
+            best = max(df.columns, key=_hits)
+        if _hits(best) > 0:
+            chosen["sample_id"] = (best, -1)
+
+    df = pd.DataFrame({field: df[col] for field, (col, _) in chosen.items()})
+    if "sample_id" not in df.columns:
+        raise ValueError("No sample ID column found (expected e.g. 'sample_id', 'sample' or 'isolate').")
+    df = df.fillna("").apply(lambda s: s.str.strip())
+
+    if "geo" in df.columns:
+        ncbi_style = _normalise_header(chosen["geo"][0]).startswith("geo_loc")
+        has_colon = df["geo"].str.contains(":")
+        head = df["geo"].str.split(":", n=1).str[0].str.strip()
+        tail = df["geo"].str.split(":", n=1).str[-1].str.strip()
+        if ncbi_style:
+            geo_country, geo_place = head, tail.where(has_colon, "")
+        else:
+            geo_country, geo_place = head.where(has_colon, ""), tail
+        for field, fill in (("country", geo_country), ("city", geo_place)):
+            current = df[field] if field in df.columns else pd.Series("", index=df.index)
+            df[field] = current.where(current != "", fill)
+        df = df.drop(columns="geo")
+
+    if "collection_date" in df.columns:
+        def _iso_date(v: str) -> str:
+            if not v:
+                return ""
+            iso = re.match(r"^\d{4}-\d{1,2}-\d{1,2}", v)
+            ts = pd.to_datetime(iso.group(0) if iso else v, errors="coerce",
+                                format="%Y-%m-%d" if iso else None, dayfirst=not iso)
+            return ts.date().isoformat() if pd.notna(ts) else ""
+        df["collection_date"] = df["collection_date"].map(_iso_date)
+    if "anatomical_site" in df.columns:
+        df["anatomical_site"] = df["anatomical_site"].map(_site_from_text)
+    return df[df["sample_id"] != ""]
+
+
+def _import_metadata_table(sample_ids: list[str], project_name: str, existing: dict, key_prefix: str) -> None:
+    st.markdown("**Import from a table**")
+    st.caption(
+        "CSV, TSV or Excel with one row per sample. Column headers can be in English or "
+        "Portuguese, with spaces or underscores, e.g. Sample ID / Run / ID da amostra, "
+        "Collection date / Data de colheita, Anatomical site / isolation_source / Local anatómico, "
+        "Country / País, City / Region / geographic_location / Concelho, "
+        "Health unit / Unidade de saúde. NCBI tables (geo_loc_name \"Country: Locality\") are "
+        "also read. Other columns are ignored."
+    )
+    template = pd.DataFrame([{c: (sid if c == "sample_id" else "") for c in _META_COLS} for sid in sample_ids])
+    st.download_button(
+        "⬇ Template (CSV)",
+        data=template.to_csv(index=False).encode(),
+        file_name="metadata_template.csv",
+        mime="text/csv",
+        key=f"{key_prefix}_meta_template",
+    )
+    uploaded = st.file_uploader(
+        "Metadata table", type=["csv", "tsv", "txt", "xlsx"], key=f"{key_prefix}_meta_file",
+    )
+    if uploaded is None:
+        return
+
+    try:
+        table = _read_metadata_table(uploaded, sample_ids)
+    except Exception as e:
+        st.error(f"Could not read the table: {e}")
+        return
+
+    by_key = {_sample_key(sid): sid for sid in sample_ids}
+    table["_sid"] = table["sample_id"].map(lambda v: by_key.get(_sample_key(v)))
+    matched = table[table["_sid"].notna()]
+    unmatched = table.loc[table["_sid"].isna(), "sample_id"].tolist()
+
+    st.caption(f"{len(matched)} of {len(sample_ids)} {plural(len(sample_ids), 'sample')} matched in the table.")
+    if unmatched:
+        st.warning(
+            "Rows not matching any uploaded sample: "
+            + ", ".join(unmatched[:20]) + (" …" if len(unmatched) > 20 else "")
+        )
+    if matched.empty:
+        st.caption("Uploaded sample names look like: " + ", ".join(sample_ids[:5]))
+        return
+
+    if st.button(
+        f"Import metadata for {len(matched)} {plural(len(matched), 'sample')}",
+        key=f"{key_prefix}_meta_import", type="primary",
+    ):
+        records = []
+        for _, r in matched.iterrows():
+            sid = r["_sid"]
+            record = {f: existing.get(sid, {}).get(f) or "" for f in _META_COLS[1:]}
+            record.update({f: r[f] for f in _META_COLS[1:] if f in r and r[f]})
+            records.append({"sample_id": sid, **record})
+        db.init_project(project_name)
+        db.save_metadata(project_name, records)
+        _load_project_cached.clear()
+        st.session_state.pop(f"{key_prefix}_meta_editor", None)
+        st.success(f"Metadata imported for {len(records)} {plural(len(records), 'sample')}.")
+        st.rerun()
+
 
 def _inline_metadata_widget(
     sample_ids: list[str],
@@ -1205,6 +1452,9 @@ def _inline_metadata_widget(
         return ts.date() if pd.notna(ts) else None
 
     with st.expander("Add metadata (optional)", expanded=False):
+
+        _import_metadata_table(sample_ids, project_name, existing, key_prefix)
+        st.markdown("**Or edit directly**")
 
         blank = {f: "" for f in _META_COLS[1:]}
         rows = []
@@ -1231,12 +1481,6 @@ def _inline_metadata_widget(
                 ),
                 "anatomical_site": st.column_config.SelectboxColumn(
                     "Anatomical site", options=_SITE_OPTIONS
-                ),
-                "sex": st.column_config.SelectboxColumn(
-                    "Sex", options=_SEX_OPTIONS
-                ),
-                "age": st.column_config.NumberColumn(
-                    "Age", min_value=0, max_value=120, step=1
                 ),
                 "country": st.column_config.TextColumn("Country"),
                 "city": st.column_config.TextColumn("City/Municipality"),
@@ -1297,7 +1541,6 @@ _PROJECT_RESULT_KEYS: tuple[str, ...] = (
     "phy_matrix_path", "phy_upload_names", "phy_cgmlst_result",
     "phy_nj_tree_path", "phy_ml_tree_path",
     "_amr_loaded_project", "_asm_loaded_project", "_qc_loaded_project",
-    "_amr_worker_pending_jobs", "_amr_worker_pending_project",
     "_asm_pending_jobs", "_asm_pending_project",
     "_qc_pending_jobs", "_qc_pending_project",
     "_fqc_pending_jobs", "_fqc_pending_project",
@@ -1514,8 +1757,6 @@ Immediate clinical review is recommended.
 
         _t1_rows, _t2_rows, _t3_rows = [], [], []
         for g, muts in chrom.items():
-            if g in _CHROM_GENE_SUPPRESS:
-                continue
             gdisp = _CHROM_GENE_RENAME.get(g, g)
             for m in (muts or []):
                 wkey = f"{g}_{m}"
@@ -1591,11 +1832,11 @@ Immediate clinical review is recommended.
         if prob >= 0.4:
             _rb_brd, _rb_accent = "#f59e0b", "#f59e0b"
             _rb_bg  = "linear-gradient(135deg,rgba(245,158,11,0.12),rgba(245,158,11,0.04))"
-            _rb_lbl = "Treatment with caution, resistance detected"
+            _rb_lbl = "Clinical interpretation (informative)"
         else:
             _rb_brd, _rb_accent = "#00c9b1", "#00c9b1"
             _rb_bg  = "linear-gradient(135deg,rgba(0,201,177,0.12),rgba(0,201,177,0.04))"
-            _rb_lbl = "Recommended Treatment, European 2020 (IUSTI)"
+            _rb_lbl = "💊 Recommended Treatment, European 2020 (IUSTI)"
         _avoid_html = (
             f'<div style="margin-top:0.6rem;font-size:0.82rem;color:#ef4444;">'
             f'<strong>Avoid:</strong> {_avoid_display}</div>'
@@ -1605,7 +1846,7 @@ Immediate clinical review is recommended.
         padding:1.2rem 1.5rem;margin:0.25rem 0 1rem 0;">
   <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;
           letter-spacing:0.1em;color:{_rb_accent};margin-bottom:0.5rem;">
-💊 {_rb_lbl}
+{_rb_lbl}
   </div>
   <div style="font-size:1.25rem;font-weight:800;color:#e2e8f0;line-height:1.35;">
 {_rec_display}

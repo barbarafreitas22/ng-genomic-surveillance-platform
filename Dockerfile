@@ -19,13 +19,10 @@ RUN micromamba create -n ng -c conda-forge -c bioconda -c defaults \
         pip \
     && micromamba clean --all --yes
 
-RUN micromamba install -n ng -c conda-forge -c defaults \
+RUN micromamba install -n ng -c conda-forge -c bioconda \
         pandas numpy scipy scikit-learn biopython \
         streamlit altair matplotlib-base seaborn-base plotly \
-        requests pyyaml python-dateutil rich psutil \
-    && micromamba clean --all --yes
-
-RUN micromamba install -n ng -c bioconda -c conda-forge \
+        requests pyyaml python-dateutil rich psutil openpyxl \
         fastp \
         minimap2 samtools bcftools \
         kraken2 blast ncbi-datasets-cli \
@@ -50,6 +47,9 @@ RUN apt-get update -qq && apt-get install -y --no-install-recommends \
 
 RUN micromamba run -n ng pip install --no-cache-dir \
         vega-datasets newick pyfastx scikit-image chewbbaca
+
+RUN micromamba run -n ng python -c "import streamlit, altair, matplotlib, seaborn, plotly, pandas, Bio, psutil" \
+    && micromamba run -n ng sh -c 'for b in spades.py fastp kraken2 blastn minimap2 samtools bcftools mlst rapidnj ska chewBBACA.py; do command -v "$b" >/dev/null || { echo "missing: $b"; exit 1; }; done'
 
 ENV PATH="/opt/conda/envs/ng/bin:${PATH}"
 ENV PYTHONPATH="/workspace"

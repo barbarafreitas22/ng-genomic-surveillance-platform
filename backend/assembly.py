@@ -208,13 +208,13 @@ ASSEMBLY_QC_THRESHOLDS = {
         "max_contigs": 150,
         "min_n50": 30_000,
         "min_total_len": 2_000_000,
-        "max_total_len": 2_200_000,
+        "max_total_len": 2_300_000,
     },
     "caution": {
         "max_contigs": 180,
         "min_n50": 20_000,
         "min_total_len": 1_800_000,
-        "max_total_len": 2_200_000,
+        "max_total_len": 2_300_000,
     },
 }
 

@@ -9,6 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 import configparser
 
+from Bio import SeqIO
 from Bio.Seq import Seq
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,7 @@ BLASTN   = paths.get("BLASTN", "blastn")
 _FREQ_PANEL_PATH = PROJECT_ROOT / "data" / "synonymous_freq_panel.json"
 
 _FAIDX_LOCK = threading.Lock()
+_FASTQ_LOCK = threading.Lock()
 
 @lru_cache(maxsize=None)
 def _samtools_sort_major() -> int:
@@ -222,6 +224,8 @@ _MTRR_EFFLUX_KEYS: frozenset[str] = frozenset({
 _TRUNCATION_RULES = {
     "mtrR": "efflux_pump_overexpression",
 }
+
+_DISRUPTION_GENES = {"mtrR", "mtrC"}
 
 AMR_TIER: dict[str, int] = {
     "penA_A501V": 1, "penA_A501P": 1, "penA_A501T": 1,
@@ -625,13 +629,31 @@ def detect_presence(ref_gene: Path, contigs: Path,
     return False
 
 
+def _contigs_as_fastq(contigs: Path, outdir: Path) -> Path:
+    """
+    Contigs carry no base qualities; without them bcftools gives every
+    indel QUAL 0 and drops it. A uniform Q40 FASTQ lets indels be called.
+    """
+    fastq = outdir / f"{Path(contigs).stem}.q40.fastq"
+    with _FASTQ_LOCK:
+        if not fastq.exists():
+            tmp = fastq.with_suffix(".tmp")
+            with open(tmp, "w") as out:
+                for record in SeqIO.parse(str(contigs), "fasta"):
+                    seq = str(record.seq)
+                    out.write(f"@{record.id}\n{seq}\n+\n{'I' * len(seq)}\n")
+            os.replace(tmp, fastq)
+    return fastq
+
+
 def align_and_sort(ref_gene: Path, contigs: Path, outdir: Path):
     sam = outdir / f"{ref_gene.stem}.sam"
     bam = outdir / f"{ref_gene.stem}.bam"
     sorted_bam = outdir / f"{ref_gene.stem}.sorted.bam"
 
     # asm20: assembled contigs vs reference, tolerates up to ~20% divergence
-    sam_out = run_cmd([MINIMAP2, "-a", "-x", "asm20", str(ref_gene), str(contigs)])
+    reads = _contigs_as_fastq(contigs, outdir)
+    sam_out = run_cmd([MINIMAP2, "-a", "-x", "asm20", str(ref_gene), str(reads)])
     sam.write_text(sam_out)
 
     bam.write_bytes(_run_cmd_binary(["samtools", "view", "-bS", str(sam)]))
@@ -661,7 +683,7 @@ def call_variants(ref_gene: Path, contigs: Path, outdir: Path) -> Path:
     vcf = outdir / f"{ref_gene.stem}.vcf"
 
     mpileup = subprocess.run(
-        ["bcftools", "mpileup", "-f", str(ref_gene), str(sorted_bam)],
+        ["bcftools", "mpileup", "-m", "1", "-f", str(ref_gene), str(sorted_bam)],
         capture_output=True
     )
     if mpileup.returncode != 0:
@@ -670,7 +692,7 @@ def call_variants(ref_gene: Path, contigs: Path, outdir: Path) -> Path:
         )
 
     call_out = subprocess.run(
-        ["bcftools", "call", "-mv", "--ploidy", "1", "-o", str(vcf)],
+        ["bcftools", "call", "-mv", "-P", "0.1", "--ploidy", "1", "-o", str(vcf)],
         input=mpileup.stdout,
         capture_output=True
     )
@@ -728,11 +750,42 @@ def parse_vcf(vcf_path: Path, ref_gene: Path = None) -> tuple[list, list]:
                 continue
             ref_nuc = fields[3]
             alt_nuc = fields[4]
+            if "," in alt_nuc:
+                continue
+            while len(ref_nuc) > 1 and len(alt_nuc) > 1 and ref_nuc[-1] == alt_nuc[-1]:
+                ref_nuc, alt_nuc = ref_nuc[:-1], alt_nuc[:-1]
+            while len(ref_nuc) > 1 and len(alt_nuc) > 1 and ref_nuc[0] == alt_nuc[0]:
+                ref_nuc, alt_nuc, pos = ref_nuc[1:], alt_nuc[1:], pos + 1
             is_snp = len(ref_nuc) == 1 and len(alt_nuc) == 1
             if is_snp:
                 snp_rows.append((pos, ref_nuc, alt_nuc))
             else:
                 indel_rows.append((pos, ref_nuc, alt_nuc))
+
+    # bcftools left-aligns indels inside repeats, often off the codon
+    # boundary; every equivalent placement is tried and a known rule name wins.
+    known_indels = {
+        k.split("_", 1)[1] for k in list(CDC_RULES) + list(AMR_TIER)
+        if gene_name and k.startswith(f"{gene_name}_") and ("_ins" in k or "_del" in k)
+    }
+    ref_upper = ref_seq.upper() if ref_seq is not None else None
+
+    def _del_name(start0: int, n_codons: int) -> str | None:
+        first_codon_0 = start0 // 3
+        ref_aas = []
+        for i in range(n_codons):
+            codon = ref_upper[(first_codon_0 + i) * 3 : (first_codon_0 + i) * 3 + 3]
+            if len(codon) == 3:
+                ref_aas.append(_translate_codon(codon))
+        if len(ref_aas) == 1:
+            return f"del{ref_aas[0]}{first_codon_0 + 1}"
+        if len(ref_aas) > 1:
+            return f"del{ref_aas[0]}{first_codon_0 + 1}_{ref_aas[-1]}{first_codon_0 + n_codons}"
+        return None
+
+    def _pick(names: list[str]) -> str | None:
+        names = [n for n in names if n]
+        return next((n for n in names if n in known_indels), names[0] if names else None)
 
     for pos, ref_nuc, alt_nuc in indel_rows:
         is_insertion = len(alt_nuc) > len(ref_nuc) and len(ref_nuc) == 1
@@ -741,36 +794,32 @@ def parse_vcf(vcf_path: Path, ref_gene: Path = None) -> tuple[list, list]:
         if is_insertion and not is_rna:
             ins_len = len(alt_nuc) - len(ref_nuc)
             if ins_len % 3 == 0:
-                codon_num = (pos - 1) // 3 + 1
-                mut_str = f"ins{codon_num}"
-                if _at_known_pos(mut_str):
+                starts = [pos]
+                if ref_upper is not None:
+                    inserted, q = alt_nuc[1:].upper(), pos
+                    while q < len(ref_upper) and ref_upper[q] == inserted[0]:
+                        inserted, q = inserted[1:] + ref_upper[q], q + 1
+                        starts.append(q)
+                aligned = [f"ins{q // 3}" for q in starts if q % 3 == 0]
+                mut_str = _pick(aligned or [f"ins{(pos - 1) // 3 + 1}"])
+                if mut_str and _at_known_pos(mut_str):
                     mutations.append(mut_str)
-            elif gene_name in _TRUNCATION_RULES and "disrupted" not in mutations:
+            elif gene_name in _DISRUPTION_GENES and "disrupted" not in mutations:
                 mutations.append("disrupted")
             continue
 
         if is_deletion and not is_rna:
             del_len = len(ref_nuc) - len(alt_nuc)
-            if del_len % 3 == 0 and ref_seq is not None:
-                first_del_0   = pos
-                first_codon_0 = first_del_0 // 3
-                n_codons      = del_len // 3
-                ref_aas = []
-                for i in range(n_codons):
-                    cs    = (first_codon_0 + i) * 3
-                    codon = ref_seq[cs : cs + 3]
-                    if len(codon) == 3:
-                        ref_aas.append(_translate_codon(codon))
-                if len(ref_aas) == 1:
-                    mut_str = f"del{ref_aas[0]}{first_codon_0 + 1}"
-                    if _at_known_pos(mut_str):
-                        mutations.append(mut_str)
-                elif len(ref_aas) > 1:
-                    last = first_codon_0 + n_codons
-                    mut_str = f"del{ref_aas[0]}{first_codon_0 + 1}_{ref_aas[-1]}{last}"
-                    if _at_known_pos(mut_str):
-                        mutations.append(mut_str)
-            elif gene_name in _TRUNCATION_RULES and "disrupted" not in mutations:
+            if del_len % 3 == 0 and ref_upper is not None:
+                starts, p = [pos], pos
+                while p + del_len < len(ref_upper) and ref_upper[p] == ref_upper[p + del_len]:
+                    p += 1
+                    starts.append(p)
+                aligned = [_del_name(p, del_len // 3) for p in starts if p % 3 == 0]
+                mut_str = _pick(aligned or [_del_name(pos, del_len // 3)])
+                if mut_str and _at_known_pos(mut_str):
+                    mutations.append(mut_str)
+            elif gene_name in _DISRUPTION_GENES and "disrupted" not in mutations:
                 mutations.append("disrupted")
 
     if is_rna:
@@ -820,6 +869,8 @@ def parse_vcf(vcf_path: Path, ref_gene: Path = None) -> tuple[list, list]:
         for pos, ref_nuc, alt_nuc in snp_rows:
             mutations.append(f"{ref_nuc}{pos}{alt_nuc}")
 
+    if gene_name in _DISRUPTION_GENES and "disrupted" not in mutations and any(m.endswith("*") for m in mutations):
+        mutations.append("disrupted")
     return mutations, synonymous
 
 
@@ -1258,6 +1309,9 @@ def _call_plasmid_genes(target: Path) -> tuple[dict, dict]:
 def _apply_pena_insertions(contigs: Path, chromosomal: dict) -> dict:
     debug: dict = {}
     try:
+        pena_muts = chromosomal.get("penA", [])
+        if "ins345" in pena_muts:
+            pena_muts[pena_muts.index("ins345")] = "ins346"
         if detect_pena_ins346(contigs):
             pena_muts = chromosomal.setdefault("penA", [])
             if "ins345" not in pena_muts and "ins346" not in pena_muts:
@@ -1307,6 +1361,58 @@ def _apply_mtr_mosaics(contigs: Path, chromosomal: dict) -> dict:
     return debug
 
 
+def detect_gene_disruption(ref_gene: Path, contigs: Path,
+                           min_pid: float = 80.0, min_cov: float = 0.95) -> bool | None:
+    """
+    Loss-of-function call from the whole-gene alignment (frameshift or
+    premature stop), independent of bcftools, which drops indels on
+    contig alignments (single read, no base qualities). Thresholds follow
+    Pathogenwatch (pid 80, coverage 95). Returns None when the gene is
+    absent, too divergent, or split across contigs.
+    """
+    proc = subprocess.run(
+        [BLASTN, "-query", str(ref_gene), "-subject", str(contigs),
+         "-outfmt", "6 pident qlen qstart qend qseq sseq", "-dust", "no", "-max_hsps", "1"],
+        capture_output=True, text=True,
+    )
+    best = None
+    for line in proc.stdout.strip().splitlines():
+        parts = line.split("\t")
+        if len(parts) < 6:
+            continue
+        pid, qlen, qstart, qend = float(parts[0]), int(parts[1]), int(parts[2]), int(parts[3])
+        cov = (qend - qstart + 1) / qlen
+        if pid >= min_pid and cov >= min_cov and (best is None or cov > best[1]):
+            best = (pid, cov, qstart, qlen, parts[4], parts[5])
+    if best is None:
+        return None
+    _, _, qstart, qlen, qseq, sseq = best
+    if (qseq.count("-") - sseq.count("-")) % 3:
+        return True
+    subject = sseq.replace("-", "")
+    subject = subject[(3 - (qstart - 1) % 3) % 3:]
+    protein = _translate_codon(subject[: len(subject) // 3 * 3]) if len(subject) >= 3 else ""
+    stop = protein.find("*")
+    return stop != -1 and stop < (qlen // 3) * 0.9
+
+
+def _apply_gene_disruption(contigs: Path, chromosomal: dict) -> dict:
+    debug: dict = {}
+    for gene in sorted(_DISRUPTION_GENES):
+        ref = GENE_DB_CROM / f"{gene}.fasta"
+        if not ref.exists():
+            continue
+        try:
+            disrupted = detect_gene_disruption(ref, contigs)
+            debug[f"{gene}_disrupted"] = disrupted
+            muts = chromosomal.setdefault(gene, [])
+            if disrupted and "disrupted" not in muts:
+                muts.append("disrupted")
+        except Exception as e:
+            debug[f"error_{gene}_disruption"] = str(e)
+    return debug
+
+
 def _apply_efflux_promoters(contigs: Path, chromosomal: dict) -> dict:
     debug: dict = {}
     try:
@@ -1347,6 +1453,7 @@ def run_amr_variant_calling(sample_id: str, contigs: Path):
     dbg_mtrr   = _apply_mtrr_promoter(contigs, chromosomal)
     dbg_mosaic = _apply_mtr_mosaics(contigs, chromosomal)
     dbg_efflux = _apply_efflux_promoters(contigs, chromosomal)
+    dbg_disrupt = _apply_gene_disruption(contigs, chromosomal)
 
     debug = {
         "gene_db_crom":          str(GENE_DB_CROM),
@@ -1355,7 +1462,7 @@ def run_amr_variant_calling(sample_id: str, contigs: Path):
         "plasm_exists":          GENE_DB_PLASM.exists(),
         "crom_genes":            [f.stem for f in sorted(GENE_DB_CROM.glob("*.fasta"))],
         "plasm_genes":           [f.stem for f in sorted(GENE_DB_PLASM.glob("*.fasta"))],
-        **dbg_chrom, **dbg_plasm, **dbg_pena, **dbg_mtrr, **dbg_mosaic, **dbg_efflux,
+        **dbg_chrom, **dbg_plasm, **dbg_pena, **dbg_mtrr, **dbg_mosaic, **dbg_efflux, **dbg_disrupt,
     }
 
     cdc_pheno    = infer_cdc_phenotype(chromosomal, plasmid)

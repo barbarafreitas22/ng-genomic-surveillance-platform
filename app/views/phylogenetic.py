@@ -525,7 +525,8 @@ if (resistanceSeen.size) {{
                 _uc = {"Sample": _r["Sample"]}
                 if _has_cgmlst:
                     _uc["Cluster"] = _r.get("Cluster", "—")
-                _uc["Nearest reference"] = _r["Nearest neighbour"] if _r["NN type"] == "Reference" else "—"
+                _uc["Nearest neighbour"] = _r["Nearest neighbour"]
+                _uc["NN type"]           = _r["NN type"]
                 _uc["Distance (SNPs)"]   = _r["NN distance (SNPs)"]
                 _uc["Distance (%)"]      = _r["NN distance (%)"]
                 if _has_typing:
