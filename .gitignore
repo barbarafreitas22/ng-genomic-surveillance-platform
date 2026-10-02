@@ -166,5 +166,3 @@ data/phylogeny/*.skf
 *.ann
 *.amb
 *.sa
-
-data/kraken2_ng/hash.k2d

@@ -6,7 +6,6 @@ Dockerfile text eol=lf
 dockerfile text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf
-
 # Sequence/profile data — always text, force LF for cross-platform consistency
 *.fasta text eol=lf
 *.fas text eol=lf
@@ -14,9 +13,9 @@ dockerfile text eol=lf
 *.tab text eol=lf
 *.tsv text eol=lf
 *.csv text eol=lf
-
 # Binary reference databases — never let autocrlf touch these
 *.pkl binary
 *.xlsx binary
 *.k2d binary
 *.k2c binary
+data/kraken2_ng/*.k2d filter=lfs diff=lfs merge=lfs -text
