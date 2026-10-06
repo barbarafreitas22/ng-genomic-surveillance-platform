@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Split into multiple layers
+    
 RUN micromamba create -n ng -c conda-forge -c bioconda -c defaults \
         python=3.10 \
         pip \
@@ -33,8 +33,9 @@ RUN micromamba install -n ng -c bioconda -c conda-forge --freeze-installed \
         spades \
     && micromamba clean --all --yes
 
-# samtools is built from source: the conda mlst package pins samtools to 0.1.x
-# via perl-bio-samtools, preventing a conda-level upgrade.
+# samtools is built from source
+# pins samtools to 0.1.x via perl-bio-samtools, preventing a conda-level upgrade.
+# mlst uses BLAST for typing.
 RUN apt-get update -qq && apt-get install -y --no-install-recommends \
         gcc make bzip2 zlib1g-dev libbz2-dev liblzma-dev libncurses5-dev \
     && curl -fsSL https://github.com/samtools/samtools/releases/download/1.21/samtools-1.21.tar.bz2 \

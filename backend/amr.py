@@ -762,8 +762,6 @@ def parse_vcf(vcf_path: Path, ref_gene: Path = None) -> tuple[list, list]:
             else:
                 indel_rows.append((pos, ref_nuc, alt_nuc))
 
-    # bcftools left-aligns indels inside repeats, often off the codon
-    # boundary; every equivalent placement is tried and a known rule name wins.
     known_indels = {
         k.split("_", 1)[1] for k in list(CDC_RULES) + list(AMR_TIER)
         if gene_name and k.startswith(f"{gene_name}_") and ("_ins" in k or "_del" in k)

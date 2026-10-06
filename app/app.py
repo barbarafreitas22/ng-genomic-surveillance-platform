@@ -421,7 +421,7 @@ pages_list = [
     "Homepage",
     "Full Pipeline Results",
     "1. Quality Control & Assembly",
-    "2. AMR Profiling",
+    "2. AMR Detection and Sequence Typing",
     "3. Phylogenetic Analysis",
     "4. Neisseria gonorrhoeae Clinical Relevance",
     "5. Platform Technical Documentation",
@@ -445,7 +445,7 @@ elif page == "Full Pipeline Results":
     from views.full_pipeline_results import render; render()
 elif page == "1. Quality Control & Assembly":
     from views.qc_assembly import render; render()
-elif page == "2. AMR Profiling":
+elif page == "2. AMR Detection and Sequence Typing":
     from views.amr import render; render()
 elif page == "3. Phylogenetic Analysis":
     from views.phylogenetic import render; render()

@@ -21,7 +21,7 @@ def render() -> None:
   <div style="display:inline-flex;align-items:center;background:rgba(0,0,0,0.04);border:1px solid rgba(0,0,0,0.12);
   border-radius:20px;padding:0.22rem 0.85rem;font-size:0.7rem;font-weight:700;color:#64748b;
   letter-spacing:0.12em;text-transform:uppercase;margin-bottom:0.6rem;">Module 2</div>
-  <div style="font-size:1.6rem;font-weight:800;color:#0f172a;">2. AMR Profiling</div>
+  <div style="font-size:1.6rem;font-weight:800;color:#0f172a;">2. AMR Detection and Sequence Typing</div>
 </div>
 """)
 
@@ -107,8 +107,8 @@ def render() -> None:
             "reduced_beta_lactam_susceptibility":  "Beta-lactam reduced susceptibility",
             "tetracycline_chromosomal_resistance": "Tetracycline chromosomal resistance",
             "reduced_penicillin_susceptibility":   "Penicillin reduced susceptibility",
-            "efflux_pump_overexpression":          "MtrCDE efflux — reduced susceptibility (penicillin, tetracycline, azithromycin)",
-            "norM_efflux_upregulation":            "NorM efflux — reduced fluoroquinolone susceptibility",
+            "efflux_pump_overexpression":          "MtrCDE efflux - reduced susceptibility (penicillin, tetracycline, azithromycin)",
+            "norM_efflux_upregulation":            "NorM efflux - reduced fluoroquinolone susceptibility",
             "efflux_tetracycline_contribution":    None,
             "penA_allele_likely_mosaic":           "Mosaic penA pattern suspected (≥3 associated mutations)",
             "fluoroquinolone_minor_parE":          None,
@@ -136,8 +136,7 @@ def render() -> None:
             res_cat     = res.resistance_category
 
             labels     = [_pheno_label(p) for p in cdc]
-            labels     = [l for l in labels if l is not None]
-            phenotypes = "\n".join(labels) or "Wildtype"
+            labels     = [l for l in labels if l is not None] or ["Wildtype"]
 
             treatment  = (ther.get("recommend") or ["—"])[0] if ther else "—"
             st_val     = mlst.get("st") or "—" if not mlst.get("error") else "—"
@@ -154,7 +153,7 @@ def render() -> None:
                 "ST (MLST)":                  st_val,
                 "NG-MAST":                    ngmast_val,
                 "Genomic AMR Interpretation": treatment,
-                "CDC phenotype":              phenotypes,
+                "CDC phenotype":              labels,
                 "Score":                      f"{prob*100:.1f}%",
                 "_prob":                      prob,
             })
@@ -167,7 +166,7 @@ def render() -> None:
                 "ST (MLST)":                  "—",
                 "NG-MAST":                    "—",
                 "Genomic AMR Interpretation": errors[sid][:80],
-                "CDC phenotype":              "—",
+                "CDC phenotype":              [],
                 "Score":                      "—",
                 "_prob":                      -1.0,
             })
@@ -181,6 +180,11 @@ def render() -> None:
 
         df_sum = pd.DataFrame(summary_rows)
         display_df = df_sum.drop(columns=["_prob"])
+        csv_df = display_df.copy()
+        display_df["CDC phenotype"] = display_df["CDC phenotype"].map(
+            lambda labels: "\n".join(f"• {l}" for l in labels) if labels else "-"
+        )
+        csv_df["CDC phenotype"] = csv_df["CDC phenotype"].map(lambda labels: "; ".join(labels) or "-")
 
         def _tbl_row_style(row):
             if df_sum.loc[row.name, "_prob"] < 0:
@@ -197,7 +201,7 @@ def render() -> None:
         )
         st.download_button(
             "⬇ Download summary report (CSV)",
-            data=display_df.to_csv(index=False).encode(),
+            data=csv_df.to_csv(index=False).encode(),
             file_name="amr_summary.csv",
             mime="text/csv",
             key=f"{key_prefix}_csv_dl",

@@ -7,12 +7,12 @@ Integrated end-to-end pipeline for N. gonorrhoeae genomic surveillance, combinin
 This project aims to provide a reproducible genomic surveillance platform for *Neisseria gonorrhoeae* that bridges raw sequencing data and simplified outputs. The platform is organised into independent modules, each accessible from the Streamlit sidebar:
 
 1. **Quality Control & Assembly**: read QC, *de novo* assembly, and assembly QC
-2. **AMR Profiling**: resistance determinant detection and genotype to phenotype mapping
+2. **AMR Detection and Sequence Typing**: resistance determinant detection, genotype to phenotype mapping, and MLST / NG-STAR / NG-MAST typing
 3. **Phylogenetic Analysis**: SNP and cgMLST based phylogenetic context
 4. **Clinical Relevance**: *N. gonorrhoeae*-specific clinical background
 5. **Technical Documentation**: methodology and tools behind each module
 
-Per-sample epidemiological metadata (collection date, site, demographics) can be added inline wherever samples are uploaded or analysed.
+Per-sample epidemiological metadata (collection date, anatomical site, country, locality, health unit) can be added inline or imported from a CSV/TSV/Excel table (English or Portuguese headers) wherever samples are uploaded or analysed.
 
 A **Full Pipeline Results** view runs all stages for a batch of samples and produces a shareable, self-contained HTML report plus a direct link to the project's results.
 
@@ -44,8 +44,7 @@ A **Full Pipeline Results** view runs all stages for a batch of samples and prod
 ├── tests/                  test fixtures
 ├── environment.yml        Conda environment definition
 ├── Dockerfile
-├── docker-compose.yml      local dev compose file (builds the image)
-└── docker-compose.dist.yml distributable compose file (currently builds locally; will switch to pulling a pre-built image once one is published)
+└── docker-compose.yml      builds the image and runs the platform and the background worker
 ```
 
 ## Prepare environment (Conda)
@@ -62,21 +61,36 @@ cd app
 streamlit run app.py
 ```
 
-## Docker deployment (new machine)
+## Docker deployment
+
+Requirements: Git, [Git LFS](https://git-lfs.com) and Docker Desktop with at least 7 GB of memory
+(Settings → Resources → Memory Limit).
 
 ```bash
-cp docker-compose.dist.yml docker-compose.yml
-cp .env.example .env
+git lfs install
+git clone https://github.com/barbarafreitas22/ng-genomic-surveillance-platform.git
+cd ng-genomic-surveillance-platform
+git lfs pull
+docker compose build --progress=plain
+docker compose up -d
 ```
 
-Edit `.env` to match the machine's available RAM. `NG_WORKER_MEMORY` sets the worker container's hard memory limit; the worker reads this limit via cgroups and pauses claiming new samples whenever free headroom drops below 1.5 GB, so it self-throttles rather than crashing under memory pressure. As a practical starting point:
+Then open http://localhost:8501.
 
+- `git lfs install` must run before cloning: the Kraken2 database (`data/kraken2_ng/*.k2d`) is stored with Git LFS. Without it, these files are only small text pointers, the image builds without a working database, and species confirmation fails at runtime. `git lfs pull` fixes an existing clone; rebuild afterwards.
+- The first build takes 15–30 minutes and needs internet access (conda packages, samtools source).
+- If the build stops with `cannot allocate memory`, raise Docker Desktop's memory limit and run `docker compose build` again.
+
+Useful commands:
 
 ```bash
-docker compose up --build -d
+docker compose ps          # container status
+docker compose restart     # reload after code changes in app/ or backend/
+docker compose down        # stop
+docker compose down -v     # stop and delete all analysis results (named volumes)
 ```
 
-The first build takes several minutes. Named volumes (`ng_projects`, `ng_results`, etc.) persist analysis results across rebuilds. The cgMLST schema is versioned under `data/phylogeny/` and bind-mounted, no download step needed on a fresh deploy. To reset non-versioned data: `docker compose down -v`.
+`app/` and `backend/` are bind-mounted, so code changes only need `docker compose restart`; changes to the `Dockerfile` or `data/genes/` need a rebuild. Named volumes (`ng_projects`, `ng_results`, ...) keep analysis results across rebuilds.
 
 ## License
 

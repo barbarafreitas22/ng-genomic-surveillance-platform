@@ -312,10 +312,18 @@ _META_COL_ALIASES: dict[str, str] = {
         "local_anatomico", "local_colheita", "produto", "tipo_amostra",
         "tipo_produto", "sitio_anatomico", "fonte_isolamento",
     ], "anatomical_site"),
-    **dict.fromkeys(["country", "nation", "pais", "nacionalidade"], "country"),
+    **dict.fromkeys([
+        "country", "nation", "pais", "nacionalidade",
+        "geo_loc_name_country", "geo_loc_country", "geo_loc_name_country_calc",
+        "geographic_location_country", "geographic_location_country_or_sea",
+        "geographic_location_country_sea",
+    ], "country"),
     **dict.fromkeys([
         "city", "municipality", "city_municipality", "town", "location", "locality",
         "cidade", "concelho", "municipio", "localidade",
+        "geographic_location_region_locality", "geographic_location_locality",
+        "geographic_location_region", "geo_loc_name_region", "geo_loc_region",
+        "geo_loc_name_locality", "geo_loc_locality",
         "region", "district", "province", "state", "regiao", "distrito", "provincia",
     ], "city"),
     **dict.fromkeys([
@@ -707,15 +715,15 @@ def render_amr_mutation_matrix(results_dict: dict) -> None:
 
 
 _ESSENTIAL_GENE_INFO = {
-    "pilT":  ("Motility (type IV pilus)", "Twitching motility — retraction ATPase"),
-    "pilT2": ("Motility (type IV pilus)", "Twitching motility — retraction ATPase paralogue"),
-    "ftsZ":  ("Cell division", "Septum formation — tubulin homologue"),
+    "pilT":  ("Motility (type IV pilus)", "Twitching motility - retraction ATPase"),
+    "pilT2": ("Motility (type IV pilus)", "Twitching motility - retraction ATPase paralogue"),
+    "ftsZ":  ("Cell division", "Septum formation - tubulin homologue"),
     "recA":  ("DNA repair / recombination", "Homologous recombination, SOS response, natural transformation"),
     "comA":  ("Natural transformation (competence)", "DNA uptake across the outer membrane"),
-    "tonB":  ("Iron acquisition", "Energy transducer — powers TonB-dependent outer membrane iron transporters"),
+    "tonB":  ("Iron acquisition", "Energy transducer - powers TonB-dependent outer membrane iron transporters"),
     "fur":   ("Iron acquisition / stress response", "Master regulator of iron-uptake and oxidative-stress genes"),
-    "rpoH":  ("Stress response", "Sigma-32 factor — activates heat-shock gene expression"),
-    "tbpB":  ("Iron acquisition", "Transferrin-binding protein — extracts iron from host transferrin"),
+    "rpoH":  ("Stress response", "Sigma-32 factor - activates heat-shock gene expression"),
+    "tbpB":  ("Iron acquisition", "Transferrin-binding protein - extracts iron from host transferrin"),
 }
 
 
@@ -739,7 +747,7 @@ def _render_essential_gene_markers(results_dict: dict) -> None:
                 "Gene":        gene,
                 "Process":     process,
                 "Product":     product,
-                "Mutations":   ", ".join(muts) if muts else "—",
+                "Mutations":   ", ".join(muts) if muts else "-",
                 "Synonymous":  len(syn_muts),
             })
 
@@ -1142,6 +1150,63 @@ def _render_amr_tree_highlight(
     return result
 
 
+def _group_small_slices(counts: pd.Series, threshold: float = 0.03, label: str = "Outros") -> pd.Series:
+    share = counts / counts.sum()
+    small = share < threshold
+    if small.sum() < 2:
+        return counts
+    grouped = counts[~small]
+    grouped[label] = counts[small].sum()
+    return grouped
+
+
+def _metadata_pie_figure(df: pd.DataFrame):
+    import matplotlib.pyplot as plt
+
+    panels = [
+        ("anatomical_site", "Samples by anatomical site"),
+        ("city", "Samples by region / locality"),
+    ]
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.8))
+    for ax, (col, title) in zip(axes, panels):
+        values = df[col] if col in df.columns else pd.Series(dtype=str)
+        values = values[values.astype(bool)]
+        if values.empty:
+            ax.text(0.5, 0.5, "No data", ha="center", va="center", fontsize=11, color="#64748b")
+            ax.set_axis_off()
+            ax.set_title(title, fontsize=12, fontweight="bold")
+            continue
+        counts = _group_small_slices(values.value_counts())
+        palette = plt.cm.tab10.colors
+        colors = [palette[i % len(palette)] for i in range(len(counts))]
+        wedges, _, autotexts = ax.pie(
+            counts.values,
+            autopct="%1.1f%%",
+            startangle=90,
+            counterclock=False,
+            colors=colors,
+            pctdistance=0.75,
+            wedgeprops={"edgecolor": "white", "linewidth": 1.5},
+            textprops={"fontsize": 9},
+        )
+        for t in autotexts:
+            t.set_color("white")
+            t.set_fontweight("bold")
+        ax.legend(
+            wedges,
+            [f"{name} (n={n})" for name, n in counts.items()],
+            loc="upper center",
+            bbox_to_anchor=(0.5, -0.02),
+            ncol=2,
+            fontsize=9,
+            frameon=False,
+        )
+        ax.set_title(f"{title} (n={int(counts.sum())})", fontsize=12, fontweight="bold")
+        ax.axis("equal")
+    plt.tight_layout()
+    return fig
+
+
 def render_metadata_charts(meta: dict, sample_ids: list[str], project_name: str | None = None) -> None:
     rows = [
         {"sample_id": sid, **meta[sid]}
@@ -1186,45 +1251,15 @@ def render_metadata_charts(meta: dict, sample_ids: list[str], project_name: str 
                 use_container_width=True,
             )
 
-    def _pct_resistant_chart(col: str, title: str):
-        s = df.get(col)
-        if s is None or not s.astype(bool).any():
-            return None
-        sub = df[s.astype(bool) & (df["Resistance category"] != "Unknown")]
-        if sub.empty:
-            return None
-        grp = sub.groupby(col).agg(
-            n=("Resistance category", "size"),
-            pct_resistant=("Resistance category", lambda x: round((x != "Susceptible").mean() * 100, 1)),
-        ).reset_index()
-        grp.columns = [title, "n", "% resistant"]
-        return alt.Chart(grp).mark_bar(color="#dc2626").encode(
-            x=alt.X("% resistant:Q", title="% resistant", scale=alt.Scale(domain=[0, 100])),
-            y=alt.Y(f"{title}:N", title=None, sort="-x"),
-            tooltip=[title, "% resistant", alt.Tooltip("n:Q", title="Samples")],
-        ).properties(height=160, title=f"% resistant by {title.lower()}")
-
-    locality_chart = None
+    site_s = df.get("anatomical_site")
     city_s = df.get("city")
-    if city_s is not None and city_s.astype(bool).any():
-        loc = df[city_s.astype(bool)].groupby("city").size().reset_index(name="Samples")
-        loc.columns = ["Region / locality", "Samples"]
-        locality_chart = alt.Chart(loc).mark_arc(innerRadius=40).encode(
-            theta=alt.Theta("Samples:Q"),
-            color=alt.Color("Region / locality:N", legend=alt.Legend(orient="bottom", columns=2)),
-            tooltip=["Region / locality", alt.Tooltip("Samples:Q", title="Samples")],
-        ).properties(height=220, title="Samples by region / locality")
-
-    dist_charts = [
-        c for c in (
-            _pct_resistant_chart("anatomical_site", "Site"),
-            locality_chart,
-        ) if c is not None
-    ]
-    if dist_charts:
-        for col, chart in zip(st.columns(len(dist_charts)), dist_charts):
-            with col:
-                st.altair_chart(chart, use_container_width=True)
+    has_site = site_s is not None and site_s.astype(bool).any()
+    has_city = city_s is not None and city_s.astype(bool).any()
+    if has_site or has_city:
+        import matplotlib.pyplot as plt
+        pie_fig = _metadata_pie_figure(df)
+        st.pyplot(pie_fig, use_container_width=True)
+        plt.close(pie_fig)
 
     if city_s is not None and city_s.astype(bool).any() and project_name:
         samples = _load_project_cached(project_name).get("samples", {})
