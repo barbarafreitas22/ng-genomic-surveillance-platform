@@ -80,6 +80,7 @@ celerybeat.pid
 
 .env
 .envrc
+backend/.pubmlst_key
 .venv
 env/
 venv/

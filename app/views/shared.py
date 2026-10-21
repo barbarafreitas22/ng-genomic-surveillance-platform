@@ -533,28 +533,31 @@ def _join_determinants(pairs: list[tuple[str, str | None]]) -> str:
     return "; ".join(parts)
 
 
+def _agent_call(amr_result: AMRResult, group: str) -> tuple[str, list[tuple[str, str | None]]]:
+    determinant_pairs: list[tuple[str, str | None]] = []
+    phenos_found: set[str] = set()
+    for _, _display, lookup, gene_key, mut_key in (e for e in _MATRIX_COLS if e[0] == group):
+        if _mut_present(amr_result, lookup, gene_key, mut_key):
+            determinant_pairs.append(_matrix_entry_determinant(lookup, gene_key, mut_key, amr_result))
+            p = _matrix_entry_phenotype(lookup, gene_key, mut_key)
+            if p:
+                phenos_found.add(p)
+
+    if phenos_found & (_HIGH_IMPACT | _EXPLICIT_RESISTANT_PHENOTYPES):
+        call = "Resistant"
+    elif phenos_found & _MODERATE_IMPACT:
+        call = "Intermediate"
+    else:
+        call = "None"
+    return call, determinant_pairs
+
+
 def agent_resistance_summary(amr_result: AMRResult) -> list[dict]:
     """Per-agent Agent / Inferred resistance / Known determinants table, Pathogenwatch-style."""
     groups = [g for g in dict.fromkeys(disp[0] for disp in _MATRIX_COLS)]
     rows = []
     for group in groups:
-        entries = [e for e in _MATRIX_COLS if e[0] == group]
-        determinant_pairs: list[tuple[str, str | None]] = []
-        phenos_found: set[str] = set()
-        for _, _display, lookup, gene_key, mut_key in entries:
-            if _mut_present(amr_result, lookup, gene_key, mut_key):
-                determinant_pairs.append(_matrix_entry_determinant(lookup, gene_key, mut_key, amr_result))
-                p = _matrix_entry_phenotype(lookup, gene_key, mut_key)
-                if p:
-                    phenos_found.add(p)
-
-        if phenos_found & (_HIGH_IMPACT | _EXPLICIT_RESISTANT_PHENOTYPES):
-            call = "Resistant"
-        elif phenos_found & _MODERATE_IMPACT:
-            call = "Intermediate"
-        else:
-            call = "None"
-
+        call, determinant_pairs = _agent_call(amr_result, group)
         rows.append({
             "Agent":                _GROUP_LABELS.get(group, group),
             "Inferred resistance":  call,
@@ -806,7 +809,7 @@ def _render_cgmlst_clustering(cgmlst_result: dict | None, key_prefix: str = "cg"
         r["Sample"],
     ))
     for _row in _gg_rows:
-        _row["Genogroup/Cluster"] = _row["Genogroup/Cluster"] if _row["Genogroup/Cluster"] is not None else "—"
+        _row["Genogroup/Cluster"] = _row["Genogroup/Cluster"] if _row["Genogroup/Cluster"] is not None else "-"
     st.dataframe(pd.DataFrame(_gg_rows), use_container_width=True, hide_index=True)
 
     _cg_pairs = cgmlst_result.get("pairwise", [])
@@ -1101,10 +1104,9 @@ def _sample_resistance_categories(project_name: str | None) -> dict[str, str]:
 
 
 def _resistant_sample_ids(amr_samples: dict, group_code: str) -> set[str]:
-    idxs = [c for c in _MATRIX_COLS if c[0] == group_code]
     return {
         sid for sid, r in amr_samples.items()
-        if isinstance(r, AMRResult) and any(_mut_present(r, c[2], c[3], c[4]) for c in idxs)
+        if isinstance(r, AMRResult) and _agent_call(r, group_code)[0] == "Resistant"
     }
 
 
@@ -1833,6 +1835,20 @@ Immediate clinical review is recommended.
             if _t3_rows:
                 with st.expander("Advanced AMR details", expanded=False):
                     _render_mut_table(_t3_rows)
+
+        _other_rows = [
+            {"Gene": _CHROM_GENE_RENAME.get(g, g), "Mutation": m}
+            for g, muts in sorted((amr_result.other_chromosomal or {}).items())
+            for m in (muts or [])
+        ]
+        if _other_rows:
+            with st.expander(f"Other mutations, no known resistance role ({len(_other_rows)})", expanded=False):
+                st.caption(
+                    "Non-synonymous changes in penA, porB, mtrR and gyrA outside the positions "
+                    "covered by the resistance rules. Shown for context only; they do not affect "
+                    "the resistance calls."
+                )
+                st.dataframe(pd.DataFrame(_other_rows), use_container_width=True, hide_index=True)
 
     with col_plasm:
         st.markdown("##### Plasmid determinants")

@@ -59,6 +59,57 @@ def _render_job_wait(counts: dict, heading: str | None, progress_text: str, capt
     st.rerun()
 
 
+def _render_core_gene_table(contig_paths: dict[str, Path]) -> None:
+    from backend.core_genome import core_genome_gene_table
+
+    contig_paths = {sid: p for sid, p in contig_paths.items() if p and Path(p).exists()}
+    if not contig_paths:
+        return
+
+    _tables: dict[str, list[dict]] = {}
+    _failed: list[str] = []
+    for _sid, _path in contig_paths.items():
+        _rows = core_genome_gene_table(str(_path))
+        if _rows is None:
+            with st.spinner(f"Running core genome check for {_sid}…"):
+                _rows = core_genome_gene_table(str(_path), compute=True)
+        if _rows is None:
+            _failed.append(_sid)
+        else:
+            _tables[_sid] = _rows
+
+    st.markdown("#### Core Genome Completeness")
+    st.caption(
+        "BLASTN of the 1,713 *N. gonorrhoeae* core genes against each genome. **Present**: "
+        "≥90% identity and ≥80% coverage (counted in completeness). **Partial**: ≥90% identity "
+        "but <80% coverage, often a gene split across contigs. **Absent**: no hit."
+    )
+    if _failed:
+        st.warning(f"Core genome check failed for: {', '.join(_failed)}")
+    if not _tables:
+        return
+
+    _summary, _missing = [], []
+    for _sid, _rows in _tables.items():
+        _n = {s: sum(1 for r in _rows if r["Status"] == s) for s in ("Present", "Partial", "Absent")}
+        _summary.append({
+            "Sample":       _sid,
+            "Present":      _n["Present"],
+            "Partial":      _n["Partial"],
+            "Absent":       _n["Absent"],
+            "Completeness": f"{_n['Present'] / len(_rows) * 100:.1f}% ({_n['Present']}/{len(_rows)})",
+        })
+        _missing += [{"Sample": _sid, **r} for r in _rows if r["Status"] != "Present"]
+
+    st.dataframe(pd.DataFrame(_summary), use_container_width=True, hide_index=True)
+
+    st.markdown("**Genes not present (partial or absent)**")
+    if _missing:
+        st.dataframe(pd.DataFrame(_missing), use_container_width=True, hide_index=True)
+    else:
+        st.success("All core genes present in every sample.")
+
+
 def render() -> None:
     st.html("""
 <div style="padding:0.6rem 0 1rem 0;">
@@ -262,6 +313,10 @@ def render() -> None:
             file_name="fasta_qc_summary.csv",
             mime="text/csv",
             key="fqc_csv_dl",
+        )
+        _render_core_gene_table(
+            {_sid: Path(_r["contigs_path"]) for _sid, _r in _fqc_results.items()
+             if "error" not in _r and _r.get("contigs_path")},
         )
 
     # QC job queue polling
@@ -593,6 +648,7 @@ def render() -> None:
                 mime="text/csv",
                 key="asm_csv_dl",
             )
+            _render_core_gene_table({r["Sample"]: _contig_paths[r["Sample"]] for r in _asm_rows if r["Sample"] in _contig_paths})
         if _contig_paths:
             st.markdown("**Download assembled genomes:**")
             _dcols = st.columns(min(len(_contig_paths), 4))

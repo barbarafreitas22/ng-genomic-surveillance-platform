@@ -73,6 +73,7 @@ class AMRResult:
     ngmast: dict
     essential_gene_mutations: dict = None
     essential_gene_synonymous: dict = None
+    other_chromosomal: dict = None
 
     def to_dict(self) -> dict:
         return {
@@ -91,6 +92,7 @@ class AMRResult:
             "ngmast":                    self.ngmast,
             "essential_gene_mutations":  self.essential_gene_mutations,
             "essential_gene_synonymous": self.essential_gene_synonymous,
+            "other_chromosomal":         self.other_chromosomal,
         }
 
     @classmethod
@@ -112,4 +114,5 @@ class AMRResult:
             ngmast=d.get("ngmast", {}),
             essential_gene_mutations=d.get("essential_gene_mutations", {}),
             essential_gene_synonymous=d.get("essential_gene_synonymous", {}),
+            other_chromosomal=d.get("other_chromosomal", {}),
         )

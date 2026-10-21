@@ -19,12 +19,7 @@ try:
 except ImportError:
     _psutil = None
 
-import configparser as _configparser
-
-from ..paths import (
-    CGMLST_SCHEMA_DIR as SCHEMA_DIR,
-    CONFIG_PATH, CORE_GENOME_FASTA, RESULTS_DIR,
-)
+from ..paths import CGMLST_SCHEMA_DIR as SCHEMA_DIR
 
 _PUBMLST_BASE  = "https://rest.pubmlst.org/db/pubmlst_neisseria_seqdef"
 _NG_CGMLST_V1  = 62
@@ -32,12 +27,6 @@ _NG_CGMLST_V1  = 62
 GENOGROUP_THRESHOLD    = 400
 
 PROFILE_CACHE_DIR = SCHEMA_DIR / "profile_cache"
-
-_config = _configparser.ConfigParser()
-_config.read(CONFIG_PATH)
-BLASTN = _config["PATHS"].get("BLASTN", "blastn")
-
-CORE_GENOME_CACHE_DIR = RESULTS_DIR / "core_genome_cache"
 
 
 def is_chewbbaca_available() -> bool:
@@ -284,93 +273,6 @@ def run_allele_calling(assembly_paths: list[str], output_dir: str) -> dict[str, 
                         pass
 
     return {**cached_profiles, **new_profiles}
-
-
-# Core genome analysis based on a already used Core genome
-def _core_genome_gene_total() -> int:
-    if not CORE_GENOME_FASTA.exists():
-        return 0
-    with open(CORE_GENOME_FASTA) as f:
-        return sum(1 for line in f if line.startswith(">"))
-
-
-def core_genome_gene_count(
-    assembly_path: str, min_pid: float = 90.0, min_cov: float = 0.80,
-) -> dict | None:
-    """
-    Alternative completeness metric against data/genes/core_genome.fasta
-    (a single-genome gene set, not a cgMLST allele scheme). Uses BLASTN
-    presence/absence by identity+coverage instead of allele calling,
-    since there's no multi-allele catalog to call against.
-
-    Returns:
-        dict with core_genes_found/total/core_completeness_pct, or None
-        if the reference file is missing.
-    """
-    if not CORE_GENOME_FASTA.exists():
-        return None
-
-    total = _core_genome_gene_total()
-    if not total:
-        return None
-
-    CORE_GENOME_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    cache_file = CORE_GENOME_CACHE_DIR / f"{_file_md5(assembly_path)}.json"
-    if cache_file.exists():
-        try:
-            return json.loads(cache_file.read_text())
-        except Exception:
-            pass
-
-    proc = subprocess.run(
-        [
-            BLASTN,
-            "-query",         str(CORE_GENOME_FASTA),
-            "-subject",       str(assembly_path),
-            "-outfmt",        "6 qseqid pident length qlen",
-            "-perc_identity", str(min_pid),
-            "-dust",          "no",
-        ],
-        capture_output=True, text=True, timeout=600,
-    )
-    if proc.returncode != 0:
-        return None
-
-    best_cov: dict[str, float] = {}
-    for line in proc.stdout.strip().splitlines():
-        parts = line.split("\t")
-        if len(parts) < 4:
-            continue
-        qid, length, qlen = parts[0], parts[2], parts[3]
-        try:
-            cov = int(length) / int(qlen)
-        except (ValueError, ZeroDivisionError):
-            continue
-        if cov > best_cov.get(qid, 0.0):
-            best_cov[qid] = cov
-
-    found = sum(1 for c in best_cov.values() if c >= min_cov)
-    result = {
-        "core_genes_found": found,
-        "core_genes_total": total,
-        "core_completeness_pct": round(found / total * 100, 1) if total else 0.0,
-    }
-    try:
-        cache_file.write_text(json.dumps(result))
-    except Exception:
-        pass
-    return result
-
-
-def cached_core_genome_gene_count(assembly_path: str) -> dict | None:
-    """Read-only lookup for core_genome_gene_count's cache, does not run BLASTN."""
-    cache_file = CORE_GENOME_CACHE_DIR / f"{_file_md5(assembly_path)}.json"
-    if not cache_file.exists():
-        return None
-    try:
-        return json.loads(cache_file.read_text())
-    except Exception:
-        return None
 
 
 def _core_loci(profiles: dict, min_presence: float = 0.95) -> list[str]:

@@ -99,7 +99,7 @@ def _process_single_sample(project_name: str, sample_id: str, r1: Path, r2) -> d
             "logs":         asm.logs,
         }
         if asm.contigs:
-            from backend.phylogeny.cgmlst import core_genome_gene_count
+            from backend.core_genome import core_genome_gene_count
             try:
                 core_genome_gene_count(str(asm.contigs))
             except Exception:
@@ -142,7 +142,7 @@ def _process_single_fasta_sample(project_name: str, sample_id: str, fasta_path: 
     except Exception as e:
         qc_out = {"error": str(e)}
 
-    from backend.phylogeny.cgmlst import core_genome_gene_count
+    from backend.core_genome import core_genome_gene_count
     try:
         core_genome_gene_count(str(fasta_path))
     except Exception:

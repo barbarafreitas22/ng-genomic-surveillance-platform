@@ -49,6 +49,7 @@ def _migrate(con: sqlite3.Connection) -> None:
         ("amr_results",      "n_resistance_classes",     "INTEGER"),
         ("amr_results",      "essential_gene_mutations",  "TEXT"),
         ("amr_results",      "essential_gene_synonymous", "TEXT"),
+        ("amr_results",      "other_chromosomal",         "TEXT"),
         ("phylogeny_runs",   "cgmlst_results",           "TEXT"),
     ]
     for table, col, typ in new_cols:
@@ -266,8 +267,9 @@ def save_amr(project_name: str, sample_id: str, amr_result) -> None:
                  ngstar_st, ngstar_alleles, ngstar_novel, ngstar_incomplete,
                  ngmast_st, ngmast_alleles, ngmast_novel, ngmast_incomplete,
                  resistance_category, n_resistance_classes,
-                 essential_gene_mutations, essential_gene_synonymous, ran_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 essential_gene_mutations, essential_gene_synonymous,
+                 other_chromosomal, ran_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             sample_id,
             amr_result.failure_probability,
@@ -293,6 +295,7 @@ def save_amr(project_name: str, sample_id: str, amr_result) -> None:
             amr_result.n_resistance_classes,
             json.dumps(amr_result.essential_gene_mutations or {}),
             json.dumps(amr_result.essential_gene_synonymous or {}),
+            json.dumps(amr_result.other_chromosomal or {}),
             now,
         ))
 
@@ -452,6 +455,7 @@ def load_project(project_name: str) -> dict:
                     },
                     "essential_gene_mutations":  json.loads(row["essential_gene_mutations"] or "{}"),
                     "essential_gene_synonymous": json.loads(row["essential_gene_synonymous"] or "{}"),
+                    "other_chromosomal":         json.loads(row["other_chromosomal"] or "{}"),
                 }, sample_id=sid)
 
         phylogeny = None

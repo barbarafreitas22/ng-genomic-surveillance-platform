@@ -384,7 +384,7 @@ def parse_contigs_stats(path: str | Path) -> AssemblyStats | None:
     }
 
     try:
-        from backend.phylogeny.cgmlst import (
+        from backend.core_genome import (
             cached_core_genome_gene_count
         )
         core = cached_core_genome_gene_count(str(path))

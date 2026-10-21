@@ -704,7 +704,7 @@ def call_variants(ref_gene: Path, contigs: Path, outdir: Path) -> Path:
     return vcf
 
 
-def parse_vcf(vcf_path: Path, ref_gene: Path = None) -> tuple[list, list]:
+def parse_vcf(vcf_path: Path, ref_gene: Path = None, filtered_out: list | None = None) -> tuple[list, list]:
     """
     Parse a VCF and return (resistance_mutations, synonymous_mutations).
 
@@ -733,6 +733,13 @@ def parse_vcf(vcf_path: Path, ref_gene: Path = None) -> tuple[list, list]:
             return True
         m = _re.search(r"(\d+)", mut_str)
         return bool(m and int(m.group(1)) in known_positions)
+
+    def _keep(mut_str: str) -> bool:
+        if _at_known_pos(mut_str):
+            return True
+        if filtered_out is not None:
+            filtered_out.append(mut_str)
+        return False
 
     snp_rows: list[tuple[int, str, str]] = []   # (1-based pos, ref_nuc, alt_nuc)
     indel_rows: list[tuple[int, str, str]] = []
@@ -800,7 +807,7 @@ def parse_vcf(vcf_path: Path, ref_gene: Path = None) -> tuple[list, list]:
                         starts.append(q)
                 aligned = [f"ins{q // 3}" for q in starts if q % 3 == 0]
                 mut_str = _pick(aligned or [f"ins{(pos - 1) // 3 + 1}"])
-                if mut_str and _at_known_pos(mut_str):
+                if mut_str and _keep(mut_str):
                     mutations.append(mut_str)
             elif gene_name in _DISRUPTION_GENES and "disrupted" not in mutations:
                 mutations.append("disrupted")
@@ -815,7 +822,7 @@ def parse_vcf(vcf_path: Path, ref_gene: Path = None) -> tuple[list, list]:
                     starts.append(p)
                 aligned = [_del_name(p, del_len // 3) for p in starts if p % 3 == 0]
                 mut_str = _pick(aligned or [_del_name(pos, del_len // 3)])
-                if mut_str and _at_known_pos(mut_str):
+                if mut_str and _keep(mut_str):
                     mutations.append(mut_str)
             elif gene_name in _DISRUPTION_GENES and "disrupted" not in mutations:
                 mutations.append("disrupted")
@@ -861,7 +868,7 @@ def parse_vcf(vcf_path: Path, ref_gene: Path = None) -> tuple[list, list]:
                         })
             else:
                 mut_str = f"{ref_aa}{codon_idx + 1 + aa_offset}{alt_aa}"
-                if _at_known_pos(mut_str):
+                if _keep(mut_str):
                     mutations.append(mut_str)
     else:
         for pos, ref_nuc, alt_nuc in snp_rows:
@@ -1211,35 +1218,39 @@ def detect_macab_norM_promoter(contigs: Path) -> dict:
         return {"macAB_promoter_mut": None, "norM_promoter_mut": None, "error": str(e)}
 
 
-def _call_chromosomal_genes(contigs: Path, outdir: Path) -> tuple[dict, dict, dict]:
+def _call_chromosomal_genes(contigs: Path, outdir: Path) -> tuple[dict, dict, dict, dict]:
     ref_genes = [
         g for g in sorted(GENE_DB_CROM.glob("*.fasta"))
         if g.stem not in _SKIP_CHROM_GENES
     ]
     chromosomal: dict = {}
     synonymous: dict = {}
+    other: dict = {}
     debug: dict = {}
     if not ref_genes:
-        return chromosomal, synonymous, debug
+        return chromosomal, synonymous, other, debug
 
-    def _process_one(ref_gene: Path) -> tuple[str, list, list, str | None]:
+    def _process_one(ref_gene: Path) -> tuple[str, list, list, list, str | None]:
+        filtered_out: list = []
         try:
             vcf = call_variants(ref_gene, contigs, outdir)
-            muts, syn_muts = parse_vcf(vcf, ref_gene=ref_gene)
-            return ref_gene.stem, muts, syn_muts, None
+            muts, syn_muts = parse_vcf(vcf, ref_gene=ref_gene, filtered_out=filtered_out)
+            return ref_gene.stem, muts, syn_muts, filtered_out, None
         except Exception as e:
-            return ref_gene.stem, [], [], str(e)
+            return ref_gene.stem, [], [], [], str(e)
 
     n_workers = min(len(ref_genes), os.cpu_count() or 4)
     with ThreadPoolExecutor(max_workers=n_workers) as pool:
-        for stem, muts, syn_muts, err in pool.map(_process_one, ref_genes):
+        for stem, muts, syn_muts, other_muts, err in pool.map(_process_one, ref_genes):
             chromosomal[stem] = muts
             if stem in _CDC_GENES:
                 synonymous[stem] = syn_muts
+            if other_muts:
+                other[stem] = other_muts
             if err is not None:
                 debug[f"error_{stem}"] = err
 
-    return chromosomal, synonymous, debug
+    return chromosomal, synonymous, other, debug
 
 
 def _call_essential_genes(contigs: Path, outdir: Path) -> tuple[dict, dict, dict]:
@@ -1444,7 +1455,7 @@ def run_amr_variant_calling(sample_id: str, contigs: Path):
     ensure_dir(outdir)
     logger.info("AMR | %s | start", sample_id)
 
-    chromosomal, synonymous, dbg_chrom = _call_chromosomal_genes(contigs, outdir)
+    chromosomal, synonymous, other_chrom, dbg_chrom = _call_chromosomal_genes(contigs, outdir)
     plasmid, dbg_plasm                 = _call_plasmid_genes(contigs)
 
     dbg_pena   = _apply_pena_insertions(contigs, chromosomal)
@@ -1521,4 +1532,5 @@ def run_amr_variant_calling(sample_id: str, contigs: Path):
         ngmast=_ngmast,
         essential_gene_mutations=_essential["nonsynonymous"],
         essential_gene_synonymous=_essential["synonymous"],
+        other_chromosomal=other_chrom,
     )

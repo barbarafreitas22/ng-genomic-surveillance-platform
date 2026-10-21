@@ -72,7 +72,7 @@ def _run_job(job: dict) -> dict:
             "logs": asm.logs,
         }
         if asm.contigs:
-            from backend.phylogeny.cgmlst import core_genome_gene_count
+            from backend.core_genome import core_genome_gene_count
             try:
                 core_genome_gene_count(str(asm.contigs))
             except Exception:
@@ -101,7 +101,7 @@ def _run_job(job: dict) -> dict:
         qc_result = run_qc_pipeline_fasta(sid, fasta_path, output_dir=payload.get("output_dir"))
         save_qc(project, sid, qc_result)
 
-        from backend.phylogeny.cgmlst import core_genome_gene_count
+        from backend.core_genome import core_genome_gene_count
         try:
             core_genome_gene_count(str(fasta_path))
         except Exception:
@@ -110,7 +110,7 @@ def _run_job(job: dict) -> dict:
         stats_dict = stats.to_dict() if stats else {}
         save_assembly(project, sid, str(fasta_path), stats_dict)
 
-        return {"qc": qc_result, "assembly_stats": stats_dict}
+        return {"qc": qc_result, "assembly_stats": stats_dict, "contigs_path": str(fasta_path)}
 
     if jtype == "full_pipeline":
         from backend.full_pipeline import run_full_pipeline

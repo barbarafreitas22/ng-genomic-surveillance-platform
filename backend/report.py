@@ -139,7 +139,7 @@ tr:last-child td { border-bottom: none; }
 
 def _build_overview(samples: dict) -> str:
     from backend.assembly import parse_contigs_stats
-    from backend.phylogeny.cgmlst import core_genome_gene_count
+    from backend.core_genome import core_genome_gene_count
 
     headers = [
         "Sample", "Coverage", "≥10× breadth", "Species", "Assembly QC",
@@ -195,7 +195,7 @@ def _build_overview(samples: dict) -> str:
 
 def _build_assembly_thresholds(samples: dict) -> str:
     from backend.assembly import parse_contigs_stats, ASSEMBLY_QC_THRESHOLDS
-    from backend.phylogeny.cgmlst import core_genome_gene_count
+    from backend.core_genome import core_genome_gene_count
 
     rows = []
     for sid, data in sorted(samples.items()):

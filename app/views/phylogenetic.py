@@ -58,12 +58,11 @@ def render() -> None:
     st.markdown("""
     This module builds WGS phylogenetic trees for *Neisseria gonorrhoeae* isolates,
     placed in context with a curated backbone panel of international reference genomes and
-    Portuguese clinical isolates. Accepts assembled genomes (FASTA). Raw FASTQ reads
-    can be uploaded in Module 1 (Quality Control & Assembly) or via the Full Pipeline in HomePage.
+    Portuguese clinical isolates. Accepts assembled genomes (FASTA).
 
-    1. **SKA2** — computes pairwise SNP (allelic) distances between all genomes
-    2. **RapidNJ** — builds the Neighbour-Joining tree from the distance matrix
-    3. **cgMLST clustering** (chewBBACA) — genogroup clusters assigned at a fixed threshold
+    1. **SKA2** - computes pairwise SNP (allelic) distances between all genomes
+    2. **RapidNJ** - builds the Neighbour-Joining tree from the distance matrix
+    3. **cgMLST clustering** (chewBBACA) - genogroup clusters assigned at a fixed threshold
        of ≤400 allele differences (AD)
     """)
 
@@ -177,7 +176,7 @@ def render() -> None:
     if st.session_state.get("_phy_amr_pending_jobs") and db:
         _phy_amr_poll_status()
 
-    st.subheader("Tree visualization")
+    st.subheader("Tree visualisation")
 
     tree_path = st.session_state.get("phy_tree_path", None)
 
@@ -475,16 +474,16 @@ if (resistanceSeen.size) {{
                 "Input":  _info.get("input_type", "assembly"),
             }
             if _has_cgmlst:
-                _row["Cluster"] = str(_cg_geo) if _cg_geo is not None else "—"
-            _row["Nearest neighbour"]  = _info.get("nearest_neighbour", "—")
+                _row["Cluster"] = str(_cg_geo) if _cg_geo is not None else "-"
+            _row["Nearest neighbour"]  = _info.get("nearest_neighbour", "-")
             _row["NN distance (SNPs)"] = f"{_info.get('nn_distance', 0.0):.0f}"
             _row["NN distance (%)"]    = f"{_info.get('nn_distance_pct', 0.0):.4f}%"
             _row["NN type"]            = "Uploaded" if _info.get("nn_is_uploaded") else "Reference"
             if _has_typing:
-                _row["MLST ST"]     = _typing.get("mlst_st", "—")
-                _row["NG-STAR ST"]  = _typing.get("ngstar_st", "—")
-                _row["Mosaic penA"] = _typing.get("mosaic_pena", "—")
-                _row["NG-MAST ST"]  = _typing.get("ngmast_st", "—")
+                _row["MLST ST"]     = str(_typing.get("mlst_st", "-")).replace("—", "-")
+                _row["NG-STAR ST"]  = str(_typing.get("ngstar_st", "-")).replace("—", "-")
+                _row["Mosaic penA"] = str(_typing.get("mosaic_pena", "-")).replace("—", "-")
+                _row["NG-MAST ST"]  = str(_typing.get("ngmast_st", "-")).replace("—", "-")
             _cr_rows.append(_row)
 
         _df_cr = pd.DataFrame(_cr_rows)
@@ -524,16 +523,16 @@ if (resistanceSeen.size) {{
             for _r in _uploaded_rows:
                 _uc = {"Sample": _r["Sample"]}
                 if _has_cgmlst:
-                    _uc["Cluster"] = _r.get("Cluster", "—")
+                    _uc["Cluster"] = _r.get("Cluster", "-")
                 _uc["Nearest neighbour"] = _r["Nearest neighbour"]
                 _uc["NN type"]           = _r["NN type"]
                 _uc["Distance (SNPs)"]   = _r["NN distance (SNPs)"]
                 _uc["Distance (%)"]      = _r["NN distance (%)"]
                 if _has_typing:
-                    _uc["MLST ST"]     = _r.get("MLST ST", "—")
-                    _uc["NG-STAR ST"]  = _r.get("NG-STAR ST", "—")
-                    _uc["Mosaic penA"] = _r.get("Mosaic penA", "—")
-                    _uc["NG-MAST ST"]  = _r.get("NG-MAST ST", "—")
+                    _uc["MLST ST"]     = _r.get("MLST ST", "-")
+                    _uc["NG-STAR ST"]  = _r.get("NG-STAR ST", "-")
+                    _uc["Mosaic penA"] = _r.get("Mosaic penA", "-")
+                    _uc["NG-MAST ST"]  = _r.get("NG-MAST ST", "-")
                 _uc_rows.append(_uc)
             st.dataframe(pd.DataFrame(_uc_rows), use_container_width=True, hide_index=True)
 

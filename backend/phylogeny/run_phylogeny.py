@@ -105,14 +105,14 @@ def _local_typing(contigs: Path) -> dict:
 
     def _st(result: dict, key: str) -> str:
         if result.get("error") or not result.get(key):
-            return "—"
+            return "-"
         return str(result[key])
 
     return {
         "mlst_st":     _st(mlst, "st"),
         "ngstar_st":   _st(ngstar, "ST"),
         "ngmast_st":   _st(ngmast, "ST"),
-        "mosaic_pena": "Yes" if mosaic.get("mosaic_suspected") else ("No" if mosaic.get("identity") else "—"),
+        "mosaic_pena": "Yes" if mosaic.get("mosaic_suspected") else ("No" if mosaic.get("identity") else "-"),
     }
 
 
@@ -422,7 +422,7 @@ def build_distance_tree(uploaded_samples):
         run(["ska", "merge", BACKBONE_SKETCH] + upload_sketches + ["-o", merged_prefix])
         merged_sketch = f"{merged_prefix}.skf"
         if not os.path.exists(merged_sketch):
-            raise RuntimeError("SKA merge failed — merged.skf not created.")
+            raise RuntimeError("SKA merge failed - merged.skf not created.")
         dist_output = run(["ska", "distance", merged_sketch])
 
     with open(dist_tsv, "w") as f:
