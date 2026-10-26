@@ -63,7 +63,7 @@ _ASM_THR_DEFS = [
 ]
 
 
-# ── HTML helpers ──────────────────────────────────────────────────────────────
+
 
 def _badge(text: str, bg: str, fg: str) -> str:
     return (
@@ -135,7 +135,7 @@ tr:last-child td { border-bottom: none; }
 """
 
 
-# ── Section builders ──────────────────────────────────────────────────────────
+# Section builders 
 
 def _build_overview(samples: dict) -> str:
     from backend.assembly import parse_contigs_stats
@@ -305,7 +305,6 @@ def _build_phylogeny(phylogeny: dict | None) -> str:
     return _table(headers, rows)
 
 
-# ── Public API ────────────────────────────────────────────────────────────────
 
 def generate_html_report(
     project_name: str,

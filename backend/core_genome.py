@@ -57,8 +57,7 @@ def core_genome_gene_count(
     need_genes: bool = False,
 ) -> dict | None:
     """
-    Alternative completeness metric against data/genes/core_genome.fasta
-    (a single-genome gene set, not a cgMLST allele scheme). Uses BLASTN
+    Alternative completeness metric against data/genes/core_genome.fasta Uses BLASTN
     presence/absence by identity+coverage instead of allele calling,
     since there's no multi-allele catalog to call against.
 

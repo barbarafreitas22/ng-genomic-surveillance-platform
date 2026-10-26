@@ -35,11 +35,6 @@ def _available_memory_gb() -> float | None:
 
 
 def _run_job(job: dict) -> dict:
-    """
-    Dispatch one claimed job to its pipeline function (qc/qc_fasta/
-    assembly/amr/full_pipeline) by job_type, save the result to the
-    project DB, and return it for the caller to persist to the jobs table.
-    """
     from backend.db import init_project, save_qc, save_assembly, save_amr
 
     payload = json.loads(job["payload"])

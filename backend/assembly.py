@@ -145,7 +145,6 @@ def run_assembly_pipeline(
     """
     De novo assemble reads with SPAdes. Assembly-only mode with
     isolate optimisation and container-aware resource allocation.
-    Quality statistics are computed afterwards.
 
     Args:
         sample_id: identifier used to name the output directory.

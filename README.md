@@ -1,4 +1,4 @@
-# NG-genomic-surveillance-platform
+# NGSurv-genomic-surveillance-platform
 
 Integrated end-to-end pipeline for N. gonorrhoeae genomic surveillance, combining Quality Control, Assembly, AMR detection and phylogenetic context with an interactive Streamlit interface.
 
@@ -43,7 +43,6 @@ A **Full Pipeline Results** view runs all stages for a batch of samples and prod
 ├── data/                  reference genome, gene panels, cgMLST/Kraken2 databases
 ├── config.ini             external tool binary paths (fastp, blastn, minimap2, ...)
 ├── scripts/                one-off setup scripts and admin utilities (schema downloads, job timing report)
-├── tests/                  test fixtures
 ├── Dockerfile
 └── docker-compose.yml      builds the image and runs the platform and the background worker
 ```
